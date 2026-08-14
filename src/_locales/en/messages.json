@@ -1,0 +1,20 @@
+{
+  "extName": {
+    "message": "Jarvis"
+  },
+  "extDescription": {
+    "message": "AI agent in the Chrome side panel"
+  },
+  "actionTitle": {
+    "message": "Jarvis"
+  },
+  "starterBody": {
+    "message": "Starter. No features yet."
+  },
+  "tagline": {
+    "message": "Personal interface"
+  },
+  "statusStandby": {
+    "message": "Standby"
+  }
+}

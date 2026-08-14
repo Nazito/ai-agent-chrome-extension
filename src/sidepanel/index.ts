@@ -1,1 +1,6 @@
-console.log('Jarvis side panel loaded')
+document.documentElement.lang = chrome.i18n.getUILanguage()
+document.title = chrome.i18n.getMessage('extName')
+document.getElementById('ext-name')!.textContent = chrome.i18n.getMessage('extName')
+document.getElementById('tagline')!.textContent = chrome.i18n.getMessage('tagline')
+document.getElementById('status')!.textContent = chrome.i18n.getMessage('statusStandby')
+document.getElementById('starter-body')!.textContent = chrome.i18n.getMessage('starterBody')

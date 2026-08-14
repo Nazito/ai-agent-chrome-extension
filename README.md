@@ -9,3 +9,5 @@ npm run build
 
 Chrome → `chrome://extensions` → режим разработчика → загрузить папку `dist`.
 Клик по иконке открывает Jarvis справа.
+
+Язык интерфейса берётся из языка Chrome (`en` / `ru`).

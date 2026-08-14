@@ -1,0 +1,20 @@
+{
+  "extName": {
+    "message": "Jarvis"
+  },
+  "extDescription": {
+    "message": "AI-агент в боковой панели Chrome"
+  },
+  "actionTitle": {
+    "message": "Jarvis"
+  },
+  "starterBody": {
+    "message": "Стартер. Функций пока нет."
+  },
+  "tagline": {
+    "message": "Персональный интерфейс"
+  },
+  "statusStandby": {
+    "message": "Ожидание"
+  }
+}
