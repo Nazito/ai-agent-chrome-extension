@@ -10,6 +10,7 @@
 /build
 /dist
 /package
+.build-number
 
 # misc
 .DS_Store

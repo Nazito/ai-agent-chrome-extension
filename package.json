@@ -4,9 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc && node scripts/copy-assets.mjs"
+    "build": "tsc && node scripts/copy-assets.mjs",
+    "icons": "node scripts/make-icons.mjs"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "@types/chrome": "^0.0.287",
     "typescript": "^5.6.3"
   }

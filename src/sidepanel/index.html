@@ -1,14 +1,67 @@
 <!doctype html>
-<html lang="ru">
+<html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Jarvis</title>
+    <title></title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <h1>Jarvis</h1>
-    <p>Стартер. Функций пока нет.</p>
+    <div class="scanlines"></div>
+    <div class="frame">
+      <span class="corner tl"></span>
+      <span class="corner tr"></span>
+      <span class="corner bl"></span>
+      <span class="corner br"></span>
+
+      <header class="topbar">
+        <span class="build">#__BUILD__</span>
+        <span class="sys">SYS.OK</span>
+      </header>
+
+      <div class="stage">
+        <div class="halo"></div>
+        <svg class="orbit" viewBox="0 0 120 120" aria-hidden="true">
+          <circle class="ring spin" cx="60" cy="60" r="56" />
+          <circle class="ring spin-rev gold" cx="60" cy="60" r="48" />
+        </svg>
+        <img class="mark" src="mark.svg" alt="" />
+      </div>
+
+      <div class="title-row">
+        <span class="rule"></span>
+        <h1 id="ext-name"></h1>
+        <span class="rule"></span>
+      </div>
+      <p class="tagline" id="tagline"></p>
+      <p class="status">
+        <span class="dot"></span>
+        <span id="status"></span>
+      </p>
+
+      <div class="wave" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span>
+      </div>
+
+      <p class="body" id="starter-body"></p>
+
+      <footer class="telemetry">
+        <div>
+          <span>CORE</span>
+          IDLE
+        </div>
+        <div>
+          <span>LINK</span>
+          LOCAL
+        </div>
+        <div>
+          <span>LAT</span>
+          --ms
+        </div>
+      </footer>
+    </div>
     <script type="module" src="index.js"></script>
   </body>
 </html>
