@@ -16,5 +16,305 @@
   },
   "statusStandby": {
     "message": "Ожидание"
+  },
+  "statusListening": {
+    "message": "Слушаю"
+  },
+  "listen": {
+    "message": "Микрофон"
+  },
+  "micTitle": {
+    "message": "Микрофон"
+  },
+  "micKicker": {
+    "message": "Ваш голос"
+  },
+  "tabTitle": {
+    "message": "Звук вкладки"
+  },
+  "tabKicker": {
+    "message": "Сайт / Meet"
+  },
+  "tabStopKicker": {
+    "message": "Нажмите, чтобы сменить"
+  },
+  "sourceOff": {
+    "message": "Выкл"
+  },
+  "sourceOn": {
+    "message": "Слушаю"
+  },
+  "stop": {
+    "message": "Стоп"
+  },
+  "micIdleHint": {
+    "message": "Микрофон — ваш голос. Звук вкладки — выберите сайт или Google Meet."
+  },
+  "micLiveHint": {
+    "message": "Говорите — столбики должны двигаться."
+  },
+  "micDenied": {
+    "message": "Нет доступа к микрофону."
+  },
+  "micError": {
+    "message": "Не удалось открыть микрофон."
+  },
+  "statusRequesting": {
+    "message": "Запрашиваю микрофон"
+  },
+  "micRequestHint": {
+    "message": "Разрешите микрофон, если Chrome спросит."
+  },
+  "grantBody": {
+    "message": "В боковой панели Chrome часто не показывает запрос микрофона. Разрешите его здесь."
+  },
+  "grantAllow": {
+    "message": "Разрешить микрофон"
+  },
+  "listenTab": {
+    "message": "Вкладка"
+  },
+  "stopTab": {
+    "message": "Стоп вкладки"
+  },
+  "statusTabRequesting": {
+    "message": "Захватываю звук вкладки"
+  },
+  "statusTabListening": {
+    "message": "Слышу вкладку"
+  },
+  "tabRequestHint": {
+    "message": "Выберите вкладку Chrome. Субтитры появятся на этой вкладке."
+  },
+  "tabLiveHint": {
+    "message": "Перевод на вкладке, которую слушаете. Тащите голубую карточку Jarvis там."
+  },
+  "tabNeedsKey": {
+    "message": "Звук вкладки уже есть. Для расшифровки и перевода нужен ключ выбранного провайдера."
+  },
+  "tabError": {
+    "message": "Не удалось захватить вкладку"
+  },
+  "tabNoStream": {
+    "message": "Chrome не выдал streamId вкладки."
+  },
+  "tabChromePage": {
+    "message": "Системные страницы Chrome захватить нельзя. Откройте обычную https-вкладку или Google Meet."
+  },
+  "tabNoCapturable": {
+    "message": "Нет вкладки для захвата. Откройте обычную https-страницу или Google Meet в этом окне."
+  },
+  "tabInvokeError": {
+    "message": "Не удалось привязаться к вкладке. Откройте сайт или Meet в этом окне и нажмите ещё раз."
+  },
+  "tabPickerCancel": {
+    "message": "Выбор вкладки отменён."
+  },
+  "tabPickerNoAudio": {
+    "message": "В диалоге Chrome оставьте галочку «Поделиться звуком»."
+  },
+  "tabNoAudio": {
+    "message": "В захвате нет звука. Выберите вкладку ещё раз и оставьте «Поделиться звуком»."
+  },
+  "tabSilent": {
+    "message": "Захват есть, но сигнал тихий. Включите звук вкладки и оставьте «Поделиться звуком»."
+  },
+  "tabTranscribing": {
+    "message": "Распознаю речь…"
+  },
+  "tabTranslating": {
+    "message": "Перевожу…"
+  },
+  "tabTranscribingEn": {
+    "message": "Распознаю английский…"
+  },
+  "tabTranscribingRu": {
+    "message": "Распознаю русский…"
+  },
+  "tabTranslatingEn": {
+    "message": "Перевожу на английский…"
+  },
+  "tabTranslatingRu": {
+    "message": "Перевожу на русский…"
+  },
+  "tabWaitingSpeech": {
+    "message": "Звук доходит. Жду разборчивую речь…"
+  },
+  "tabWaitingSpeechEn": {
+    "message": "Звук доходит. Жду английскую речь…"
+  },
+  "tabWaitingSpeechRu": {
+    "message": "Звук доходит. Жду русскую речь…"
+  },
+  "originalLabel": {
+    "message": "English"
+  },
+  "translationLabel": {
+    "message": "Русский"
+  },
+  "directionKicker": {
+    "message": "Направление"
+  },
+  "directionEnRu": {
+    "message": "EN → RU"
+  },
+  "directionRuEn": {
+    "message": "RU → EN"
+  },
+  "directionHintEnRu": {
+    "message": "Сейчас: английский в субтитрах, перевод на русский. Нажмите, чтобы переключить."
+  },
+  "directionHintRuEn": {
+    "message": "Сейчас: русский в субтитрах, перевод на английский. Нажмите, чтобы переключить."
+  },
+  "apiKeyLabel": {
+    "message": "Ключ API"
+  },
+  "providerLabel": {
+    "message": "Провайдер"
+  },
+  "apiKeyLabelOpenai": {
+    "message": "Ключ OpenAI"
+  },
+  "apiKeyLabelGroq": {
+    "message": "Ключ Groq"
+  },
+  "apiKeyLabelGemini": {
+    "message": "Ключ Gemini"
+  },
+  "apiKeyHintOpenai": {
+    "message": "platform.openai.com/api-keys"
+  },
+  "apiKeyHintGroq": {
+    "message": "console.groq.com/keys — бесплатный тариф"
+  },
+  "apiKeyHintGemini": {
+    "message": "aistudio.google.com/apikey — бесплатный тариф"
+  },
+  "overlayWaiting": {
+    "message": "Жду речь."
+  },
+  "overlayWaitingEn": {
+    "message": "Жду английскую речь."
+  },
+  "overlayWaitingRu": {
+    "message": "Жду русскую речь."
+  },
+  "overlayHandle": {
+    "message": "Перевод"
+  },
+  "overlayClose": {
+    "message": "Закрыть"
+  },
+  "overlayDragHint": {
+    "message": "Потяните голубую карточку."
+  },
+  "overlayListening": {
+    "message": "Здесь появится перевод."
+  },
+  "overlayListeningEn": {
+    "message": "Здесь появится английский перевод."
+  },
+  "overlayListeningRu": {
+    "message": "Здесь появится русский перевод."
+  },
+  "captionsOpen": {
+    "message": "Перевод на экране"
+  },
+  "captionsOpened": {
+    "message": "На вкладке созвона две плашки: слева исходный язык, справа перевод. Их можно перетаскивать."
+  },
+  "sidebarCaptionsHide": {
+    "message": "Скрыть субтитры"
+  },
+  "sidebarCaptionsShow": {
+    "message": "Показать субтитры"
+  },
+  "clearOriginal": {
+    "message": "Очистить исходный текст"
+  },
+  "clearTranslation": {
+    "message": "Очистить перевод"
+  },
+  "clearCaption": {
+    "message": "Очистить текст"
+  },
+  "captionsOpenError": {
+    "message": "Не удалось показать субтитры на вкладке"
+  },
+  "captionsNoTab": {
+    "message": "Откройте обычную https-вкладку в Chrome и нажмите ещё раз."
+  },
+  "captionsNeedHost": {
+    "message": "Chrome не дал доступ к странице. chrome://extensions → Jarvis → Подробнее → Доступ к сайтам → На всех сайтах."
+  },
+  "captionsClickIcon": {
+    "message": "Откройте вкладку, которую слушаете, и нажмите иконку Jarvis в панели Chrome справа сверху. Боковая панель сама не может разблокировать страницу."
+  },
+  "statusNoTranscript": {
+    "message": "Нет расшифровки"
+  },
+  "statusNoTranslation": {
+    "message": "Нет русского перевода"
+  },
+  "statusOverlayMissing": {
+    "message": "Плашка не на экране"
+  },
+  "issueTranscribeBadKey": {
+    "message": "Субтитры не появляются: ключ {provider} не принят. Проверьте поле ключа ниже."
+  },
+  "issueTranscribeQuota": {
+    "message": "Субтитры не появляются: у {provider} закончилась квота или не подключена оплата."
+  },
+  "issueTranscribeRateLimit": {
+    "message": "Субтитры не появляются: {provider} временно ограничил частоту запросов. Подождите минуту."
+  },
+  "issueTranscribeModelGone": {
+    "message": "Субтитры не появляются: {provider} отключил модель распознавания речи. Обновите расширение или смените провайдера."
+  },
+  "issueTranscribeNetwork": {
+    "message": "Субтитры не появляются: нет связи с {provider}. Проверьте интернет."
+  },
+  "issueTranscribeUnknown": {
+    "message": "Субтитры не появляются: {provider} не смог распознать речь. {detail}"
+  },
+  "issueTranslateBadKey": {
+    "message": "Английский есть, русского перевода нет: ключ {provider} не принят или без доступа к переводу. Проверьте ключ ниже."
+  },
+  "issueTranslateQuota": {
+    "message": "Английский есть, русского перевода нет: у {provider} закончилась квота."
+  },
+  "issueTranslateRateLimit": {
+    "message": "Английский есть, русского перевода нет: {provider} временно ограничил запросы. Подождите минуту."
+  },
+  "issueTranslateModelGone": {
+    "message": "Английский есть, русского перевода нет: {provider} отключил модель перевода. Обновите расширение или смените провайдера."
+  },
+  "issueTranslateNetwork": {
+    "message": "Английский есть, русского перевода нет: нет связи с {provider}."
+  },
+  "issueTranslateEmpty": {
+    "message": "Английский есть, русского перевода нет: {provider} вернул пустой ответ. Попробуйте другой провайдер."
+  },
+  "issueTranslateUnknown": {
+    "message": "Английский есть, русского перевода нет: {provider} не смог перевести. {detail}"
+  },
+  "issueOverlayHost": {
+    "message": "Плашка с субтитрами не на вкладке созвона: Chrome не пускает расширение на страницу. chrome://extensions → Jarvis → Подробнее → Доступ к сайтам → На всех сайтах, затем обновите вкладку созвона."
+  },
+  "issueOverlayDenied": {
+    "message": "Плашка не появилась: вы не дали доступ к сайтам. Нажмите «Перевод на экране» и разрешите запрос Chrome."
+  },
+  "issueOverlayNoTab": {
+    "message": "Плашка не видна: нет обычной https-вкладки. Откройте Google Meet в Chrome, не в отдельном приложении Zoom/Meet."
+  },
+  "issueOverlayIncognito": {
+    "message": "Плашка не видна: созвон в режиме инкогнито. chrome://extensions → Jarvis → Разрешить в режиме инкогнито."
+  },
+  "issueOverlayUnknown": {
+    "message": "Плашка с субтитрами не на экране. Обновите вкладку созвона и нажмите «Перевод на экране». Если не поможет: chrome://extensions → Jarvis → Доступ к сайтам → На всех сайтах."
+  },
+  "captionsIncognito": {
+    "message": "Вкладка в режиме инкогнито. chrome://extensions → Jarvis → Разрешить в режиме инкогнито."
   }
 }

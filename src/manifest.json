@@ -25,5 +25,15 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["sidePanel"]
+  "permissions": ["sidePanel", "tabCapture", "desktopCapture", "offscreen", "storage", "tabs", "windows", "activeTab", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["overlay/index.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
 }

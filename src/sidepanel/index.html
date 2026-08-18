@@ -6,7 +6,7 @@
     <title></title>
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body>
+  <body class="hide-captions">
     <div class="scanlines"></div>
     <div class="frame">
       <span class="corner tl"></span>
@@ -15,50 +15,118 @@
       <span class="corner br"></span>
 
       <header class="topbar">
-        <span class="build">#__BUILD__</span>
-        <span class="sys">SYS.OK</span>
+        <div class="brand">
+          <div class="stage">
+            <div class="halo"></div>
+            <svg class="orbit" viewBox="0 0 120 120" aria-hidden="true">
+              <circle class="ring spin" cx="60" cy="60" r="56" />
+              <circle class="ring spin-rev gold" cx="60" cy="60" r="48" />
+            </svg>
+            <img class="mark" src="mark.svg" alt="" />
+          </div>
+          <div class="brand-text">
+            <div class="brand-row">
+              <h1 id="ext-name"></h1>
+              <span class="build">#__BUILD__</span>
+            </div>
+            <p class="status">
+              <span class="dot"></span>
+              <span id="status"></span>
+            </p>
+          </div>
+        </div>
       </header>
 
-      <div class="stage">
-        <div class="halo"></div>
-        <svg class="orbit" viewBox="0 0 120 120" aria-hidden="true">
-          <circle class="ring spin" cx="60" cy="60" r="56" />
-          <circle class="ring spin-rev gold" cx="60" cy="60" r="48" />
-        </svg>
-        <img class="mark" src="mark.svg" alt="" />
+      <div class="toolbar">
+        <button id="mic-toggle" class="icon-btn" type="button" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3.6a2.8 2.8 0 0 1 2.8 2.8v5.2a2.8 2.8 0 0 1-5.6 0V6.4A2.8 2.8 0 0 1 12 3.6z" />
+            <path d="M7.2 11.4a4.8 4.8 0 0 0 9.6 0M12 16.2v4.2M9 20.4h6" />
+          </svg>
+        </button>
+        <button id="tab-toggle" class="icon-btn" type="button" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3.2" y="5" width="12.4" height="14" rx="1.2" />
+            <path d="M7 8h5M17.2 9.2c1.1.7 1.7 1.6 1.7 2.8s-.6 2.1-1.7 2.8M19.6 7.2c1.7 1.1 2.6 2.6 2.6 4.8s-.9 3.7-2.6 4.8" />
+          </svg>
+        </button>
+        <button id="captions-toggle" class="icon-btn" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3.2" y="4.8" width="17.6" height="12.4" rx="1.2" />
+            <path d="M7.2 9.2h9.6M7.2 12.6h6.2M8 19.6h8" />
+          </svg>
+        </button>
+        <button id="sidebar-captions-toggle" class="icon-btn" type="button" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 6.2h14M5 12h14M5 17.8h9" />
+          </svg>
+        </button>
+        <button id="direction-toggle" class="dir-btn" type="button">
+          <span id="direction-title"></span>
+        </button>
       </div>
 
-      <div class="title-row">
-        <span class="rule"></span>
-        <h1 id="ext-name"></h1>
-        <span class="rule"></span>
-      </div>
-      <p class="tagline" id="tagline"></p>
-      <p class="status">
-        <span class="dot"></span>
-        <span id="status"></span>
-      </p>
-
-      <div class="wave" aria-hidden="true">
+      <div class="wave" id="wave" aria-hidden="true">
         <span></span><span></span><span></span><span></span><span></span>
         <span></span><span></span><span></span><span></span><span></span>
         <span></span><span></span>
       </div>
 
-      <p class="body" id="starter-body"></p>
+      <p class="hint" id="starter-body"></p>
+
+      <section class="captions">
+        <div>
+          <div class="caption-head">
+            <h2 id="original-label"></h2>
+            <button id="clear-original" class="text-clear" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 7h14M9.2 7l.7 12.4h4.2L14.8 7M10 7V5.6h4V7M10 11.2v5.2M14 11.2v5.2" />
+              </svg>
+            </button>
+          </div>
+          <div id="tab-original" class="caption"></div>
+        </div>
+        <div>
+          <div class="caption-head">
+            <h2 id="translation-label"></h2>
+            <button id="clear-translation" class="text-clear" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 7h14M9.2 7l.7 12.4h4.2L14.8 7M10 7V5.6h4V7M10 11.2v5.2M14 11.2v5.2" />
+              </svg>
+            </button>
+          </div>
+          <div id="tab-translation" class="caption"></div>
+        </div>
+      </section>
+
+      <div class="settings">
+        <label class="key">
+          <span id="provider-label"></span>
+          <select id="provider">
+            <option value="openai">OpenAI</option>
+            <option value="groq">Groq</option>
+            <option value="gemini">Gemini</option>
+          </select>
+        </label>
+        <label class="key">
+          <span id="api-key-label"></span>
+          <input id="api-key" type="password" autocomplete="off" />
+        </label>
+      </div>
+      <p class="key-hint" id="api-key-hint"></p>
 
       <footer class="telemetry">
         <div>
           <span>CORE</span>
-          IDLE
+          <strong id="core-value">IDLE</strong>
         </div>
         <div>
           <span>LINK</span>
-          LOCAL
+          <strong id="link-value">LOCAL</strong>
         </div>
         <div>
-          <span>LAT</span>
-          --ms
+          <span>SIG</span>
+          <strong id="signal-value">--</strong>
         </div>
       </footer>
     </div>
