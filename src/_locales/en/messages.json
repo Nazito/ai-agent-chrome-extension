@@ -16,5 +16,305 @@
   },
   "statusStandby": {
     "message": "Standby"
+  },
+  "statusListening": {
+    "message": "Listening"
+  },
+  "listen": {
+    "message": "Microphone"
+  },
+  "micTitle": {
+    "message": "Microphone"
+  },
+  "micKicker": {
+    "message": "Your voice"
+  },
+  "tabTitle": {
+    "message": "Tab audio"
+  },
+  "tabKicker": {
+    "message": "Site / Meet"
+  },
+  "tabStopKicker": {
+    "message": "Click to switch tab"
+  },
+  "sourceOff": {
+    "message": "Off"
+  },
+  "sourceOn": {
+    "message": "Listening"
+  },
+  "stop": {
+    "message": "Stop"
+  },
+  "micIdleHint": {
+    "message": "Microphone = your voice. Tab audio = pick a site or Google Meet."
+  },
+  "micLiveHint": {
+    "message": "Speak — the bars should move."
+  },
+  "micDenied": {
+    "message": "Microphone access denied."
+  },
+  "micError": {
+    "message": "Could not open the microphone."
+  },
+  "statusRequesting": {
+    "message": "Requesting microphone"
+  },
+  "micRequestHint": {
+    "message": "Allow the microphone if Chrome asks."
+  },
+  "grantBody": {
+    "message": "Chrome often hides the mic prompt inside the side panel. Allow it here."
+  },
+  "grantAllow": {
+    "message": "Allow microphone"
+  },
+  "listenTab": {
+    "message": "Tab"
+  },
+  "stopTab": {
+    "message": "Stop tab"
+  },
+  "statusTabRequesting": {
+    "message": "Capturing tab audio"
+  },
+  "statusTabListening": {
+    "message": "Hearing the tab"
+  },
+  "tabRequestHint": {
+    "message": "Choose the Chrome tab to share. Captions appear on that tab."
+  },
+  "tabLiveHint": {
+    "message": "Translation appears on the tab you are sharing. Drag the cyan Jarvis card there."
+  },
+  "tabNeedsKey": {
+    "message": "Tab audio is live. Add a key for the selected provider to transcribe and translate."
+  },
+  "tabError": {
+    "message": "Could not capture the tab"
+  },
+  "tabNoStream": {
+    "message": "Chrome did not give a tab stream id."
+  },
+  "tabChromePage": {
+    "message": "Chrome system pages cannot be captured. Open a regular https tab or Google Meet."
+  },
+  "tabNoCapturable": {
+    "message": "No capturable tab found. Open a regular https page or Google Meet in this window."
+  },
+  "tabInvokeError": {
+    "message": "Could not bind to the tab. Open the site or Meet in this window and try again."
+  },
+  "tabPickerCancel": {
+    "message": "Tab selection cancelled."
+  },
+  "tabPickerNoAudio": {
+    "message": "Keep Share audio checked in the Chrome picker."
+  },
+  "tabNoAudio": {
+    "message": "No audio in the capture. Pick the tab again and keep Share audio checked."
+  },
+  "tabSilent": {
+    "message": "Capture is on, but the signal is quiet. Unmute the tab and keep Share audio checked."
+  },
+  "tabTranscribing": {
+    "message": "Transcribing…"
+  },
+  "tabTranslating": {
+    "message": "Translating…"
+  },
+  "tabTranscribingEn": {
+    "message": "Transcribing English…"
+  },
+  "tabTranscribingRu": {
+    "message": "Transcribing Russian…"
+  },
+  "tabTranslatingEn": {
+    "message": "Translating to English…"
+  },
+  "tabTranslatingRu": {
+    "message": "Translating to Russian…"
+  },
+  "tabWaitingSpeech": {
+    "message": "Audio is reaching Jarvis. Waiting for clear speech…"
+  },
+  "tabWaitingSpeechEn": {
+    "message": "Audio is reaching Jarvis. Waiting for English speech…"
+  },
+  "tabWaitingSpeechRu": {
+    "message": "Audio is reaching Jarvis. Waiting for Russian speech…"
+  },
+  "originalLabel": {
+    "message": "English"
+  },
+  "translationLabel": {
+    "message": "Russian"
+  },
+  "directionKicker": {
+    "message": "Direction"
+  },
+  "directionEnRu": {
+    "message": "EN → RU"
+  },
+  "directionRuEn": {
+    "message": "RU → EN"
+  },
+  "directionHintEnRu": {
+    "message": "Now: English captions, Russian translation. Click to switch."
+  },
+  "directionHintRuEn": {
+    "message": "Now: Russian captions, English translation. Click to switch."
+  },
+  "apiKeyLabel": {
+    "message": "API key"
+  },
+  "providerLabel": {
+    "message": "Provider"
+  },
+  "apiKeyLabelOpenai": {
+    "message": "OpenAI key"
+  },
+  "apiKeyLabelGroq": {
+    "message": "Groq key"
+  },
+  "apiKeyLabelGemini": {
+    "message": "Gemini key"
+  },
+  "apiKeyHintOpenai": {
+    "message": "platform.openai.com/api-keys"
+  },
+  "apiKeyHintGroq": {
+    "message": "console.groq.com/keys — free tier"
+  },
+  "apiKeyHintGemini": {
+    "message": "aistudio.google.com/apikey — free tier"
+  },
+  "overlayWaiting": {
+    "message": "Waiting for speech."
+  },
+  "overlayWaitingEn": {
+    "message": "Waiting for English speech."
+  },
+  "overlayWaitingRu": {
+    "message": "Waiting for Russian speech."
+  },
+  "overlayHandle": {
+    "message": "Translation"
+  },
+  "overlayClose": {
+    "message": "Close"
+  },
+  "overlayDragHint": {
+    "message": "Drag this cyan card."
+  },
+  "overlayListening": {
+    "message": "Translation will appear here."
+  },
+  "overlayListeningEn": {
+    "message": "English translation will appear here."
+  },
+  "overlayListeningRu": {
+    "message": "Russian translation will appear here."
+  },
+  "captionsOpen": {
+    "message": "Captions on screen"
+  },
+  "captionsOpened": {
+    "message": "Two cards on the meeting tab: source language on the left, translation on the right. Drag them if needed."
+  },
+  "sidebarCaptionsHide": {
+    "message": "Hide captions"
+  },
+  "sidebarCaptionsShow": {
+    "message": "Show captions"
+  },
+  "clearOriginal": {
+    "message": "Clear source text"
+  },
+  "clearTranslation": {
+    "message": "Clear translation"
+  },
+  "clearCaption": {
+    "message": "Clear text"
+  },
+  "captionsOpenError": {
+    "message": "Could not put captions on the tab"
+  },
+  "captionsNoTab": {
+    "message": "Open a regular https tab in Chrome, then try again."
+  },
+  "captionsNeedHost": {
+    "message": "Chrome blocked the page. chrome://extensions → Jarvis → Details → Site access → On all sites."
+  },
+  "captionsClickIcon": {
+    "message": "Open the tab you are sharing, then click the Jarvis icon in Chrome's toolbar. The side panel cannot unlock the page by itself."
+  },
+  "statusNoTranscript": {
+    "message": "No transcript"
+  },
+  "statusNoTranslation": {
+    "message": "No Russian translation"
+  },
+  "statusOverlayMissing": {
+    "message": "No on-screen captions"
+  },
+  "issueTranscribeBadKey": {
+    "message": "Captions are missing: the {provider} key was rejected. Check the key field below."
+  },
+  "issueTranscribeQuota": {
+    "message": "Captions are missing: {provider} is out of quota or billing is off."
+  },
+  "issueTranscribeRateLimit": {
+    "message": "Captions are missing: {provider} rate-limited the request. Wait a minute."
+  },
+  "issueTranscribeModelGone": {
+    "message": "Captions are missing: {provider} retired the speech model. Reload the extension or switch provider."
+  },
+  "issueTranscribeNetwork": {
+    "message": "Captions are missing: no connection to {provider}. Check the network."
+  },
+  "issueTranscribeUnknown": {
+    "message": "Captions are missing: {provider} could not transcribe. {detail}"
+  },
+  "issueTranslateBadKey": {
+    "message": "English is ready, but there is no Russian: the {provider} key cannot translate. Check the key below."
+  },
+  "issueTranslateQuota": {
+    "message": "English is ready, but there is no Russian: {provider} is out of quota."
+  },
+  "issueTranslateRateLimit": {
+    "message": "English is ready, but there is no Russian: {provider} rate-limited the request. Wait a minute."
+  },
+  "issueTranslateModelGone": {
+    "message": "English is ready, but there is no Russian: {provider} retired the translation model. Reload the extension or switch provider."
+  },
+  "issueTranslateNetwork": {
+    "message": "English is ready, but there is no Russian: no connection to {provider}."
+  },
+  "issueTranslateEmpty": {
+    "message": "English is ready, but there is no Russian: {provider} returned an empty translation. Try another provider."
+  },
+  "issueTranslateUnknown": {
+    "message": "English is ready, but there is no Russian: {provider} failed to translate. {detail}"
+  },
+  "issueOverlayHost": {
+    "message": "The caption card is not on the meeting tab: Chrome blocked page access. chrome://extensions → Jarvis → Details → Site access → On all sites, then refresh the meeting tab."
+  },
+  "issueOverlayDenied": {
+    "message": "The caption card did not appear because site access was not granted. Click Captions on screen and allow the Chrome prompt."
+  },
+  "issueOverlayNoTab": {
+    "message": "The caption card is missing: there is no regular https tab. Open Google Meet in Chrome, not in a separate Zoom/Meet app."
+  },
+  "issueOverlayIncognito": {
+    "message": "The caption card is missing: the meeting is in Incognito. chrome://extensions → Jarvis → Allow in Incognito."
+  },
+  "issueOverlayUnknown": {
+    "message": "The caption card is not on screen. Refresh the meeting tab and click Captions on screen. If that fails: chrome://extensions → Jarvis → Site access → On all sites."
+  },
+  "captionsIncognito": {
+    "message": "This tab is in Incognito. chrome://extensions → Jarvis → Allow in Incognito."
   }
 }
