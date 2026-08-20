@@ -19,6 +19,11 @@ export const MessageType = {
   OverlayPlaqueCount: 'OVERLAY_PLAQUE_COUNT',
   RequestPlaqueCount: 'REQUEST_PLAQUE_COUNT',
   SetTranslateDirection: 'SET_TRANSLATE_DIRECTION',
+  ShowOverlayQuestion: 'SHOW_OVERLAY_QUESTION',
+  DismissOverlayQuestion: 'DISMISS_OVERLAY_QUESTION',
+  RequestOverlayAnswer: 'REQUEST_OVERLAY_ANSWER',
+  ShowOverlayAnswer: 'SHOW_OVERLAY_ANSWER',
+  ClearOverlayQuestions: 'CLEAR_OVERLAY_QUESTIONS',
 } as const
 
 export type CaptureSource = 'tab' | 'desktop'
@@ -49,5 +54,10 @@ export type ExtensionMessage =
   | { type: typeof MessageType.OverlayPlaqueCount; count: number }
   | { type: typeof MessageType.RequestPlaqueCount }
   | { type: typeof MessageType.SetTranslateDirection; direction: 'en-ru' | 'ru-en' }
+  | { type: typeof MessageType.ShowOverlayQuestion; id: string; question: string }
+  | { type: typeof MessageType.DismissOverlayQuestion; id: string }
+  | { type: typeof MessageType.RequestOverlayAnswer; id: string }
+  | { type: typeof MessageType.ShowOverlayAnswer; id: string; answer?: string; error?: string }
+  | { type: typeof MessageType.ClearOverlayQuestions }
 
 export type CommandResponse = { ok: true } | { ok: false; error?: string; code?: string }

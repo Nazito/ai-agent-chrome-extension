@@ -52,6 +52,48 @@ export async function translateText(
   direction: TranslateDirection,
 ): Promise<string> {
   const prompt = translatePrompt(direction)
+  return chatText(provider, apiKey, text, prompt)
+}
+
+const EXTRACT_QUESTIONS_PROMPT = `You extract questions from live meeting speech.
+Return JSON only: {"questions":["..."]}
+Include only questions that expect an answer from listeners or the room.
+Skip rhetorical questions, check-ins ("can you hear me?", "слышно?"), tag questions ("right?", "да?"), and unfinished fragments.
+Keep the speaker's original wording, lightly cleaned.
+If none, return {"questions":[]}.`
+
+const ANSWER_RU =
+  'Ты помогаешь участнику созвона ответить на вопрос спикера. Короткий ответ на русском, 2–6 предложений, как реплика вслух. Опирайся на недавнюю расшифровку. Не выдумывай факты встречи, которых нет в контексте. Если из контекста нельзя ответить — дай краткий общий ответ и скажи, чего не хватает. Верни только текст ответа.'
+const ANSWER_EN =
+  'You help a meeting participant answer a question the speaker just asked. Write a short spoken-style answer in English, 2–6 sentences. Use the recent transcript as context. Do not invent meeting facts that are not in the context. If the transcript is not enough, give a brief general answer and say what is missing. Return only the answer.'
+
+export async function extractQuestions(
+  provider: ProviderId,
+  apiKey: string,
+  windowText: string,
+): Promise<string[]> {
+  if (!windowText.trim()) {
+    return []
+  }
+  const raw = await chatText(provider, apiKey, windowText, EXTRACT_QUESTIONS_PROMPT)
+  return parseQuestionList(raw)
+}
+
+export async function answerQuestion(
+  provider: ProviderId,
+  apiKey: string,
+  question: string,
+  context: string,
+  language: 'ru' | 'en',
+): Promise<string> {
+  const prompt = language === 'ru' ? ANSWER_RU : ANSWER_EN
+  const user = context.trim()
+    ? `Question:\n${question}\n\nRecent transcript:\n${context}`
+    : `Question:\n${question}`
+  return chatText(provider, apiKey, user, prompt)
+}
+
+function chatText(provider: ProviderId, apiKey: string, text: string, prompt: string): Promise<string> {
   if (provider === 'groq') {
     return chatOpenAiCompatible('https://api.groq.com/openai/v1', apiKey, text, prompt, [
       'openai/gpt-oss-20b',
@@ -63,6 +105,51 @@ export async function translateText(
     return geminiGenerate(apiKey, undefined, `${prompt}\n\n${text}`)
   }
   return chatOpenAiCompatible('https://api.openai.com/v1', apiKey, text, prompt, ['gpt-4o-mini'])
+}
+
+function parseQuestionList(raw: string): string[] {
+  const trimmed = raw.trim()
+  if (!trimmed) {
+    return []
+  }
+  const json = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/u, '')
+  const parsed = tryParseJson(json) ?? tryParseJson(extractJsonObject(json))
+  if (!parsed) {
+    return []
+  }
+  const list = Array.isArray(parsed) ? parsed : parsed.questions
+  if (!Array.isArray(list)) {
+    return []
+  }
+  return list
+    .map((item) => (typeof item === 'string' ? item : String((item as { question?: string }).question ?? '')))
+    .map((item) => item.replace(/\s+/g, ' ').trim())
+    .filter((item) => item.length > 8)
+}
+
+function tryParseJson(text: string | null): { questions?: unknown } | unknown[] | null {
+  if (!text) {
+    return null
+  }
+  try {
+    return JSON.parse(text) as { questions?: unknown } | unknown[]
+  } catch {
+    return null
+  }
+}
+
+function extractJsonObject(text: string): string | null {
+  const start = text.search(/[\[{]/)
+  if (start < 0) {
+    return null
+  }
+  const opener = text[start]
+  const closer = opener === '[' ? ']' : '}'
+  const end = text.lastIndexOf(closer)
+  if (end <= start) {
+    return null
+  }
+  return text.slice(start, end + 1)
 }
 
 async function transcribeOpenAiCompatible(

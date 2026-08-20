@@ -138,6 +138,33 @@ chrome.runtime.onMessage.addListener(
       return false
     }
 
+    if (
+      message.type === MessageType.ShowOverlayQuestion ||
+      message.type === MessageType.ShowOverlayAnswer ||
+      message.type === MessageType.ClearOverlayQuestions
+    ) {
+      void broadcastOverlay(message)
+      sendResponse({ ok: true })
+      return false
+    }
+
+    if (message.type === MessageType.DismissOverlayQuestion) {
+      void broadcastOverlay(message)
+      if (sender.tab) {
+        void chrome.runtime.sendMessage(message).catch(() => undefined)
+      }
+      sendResponse({ ok: true })
+      return false
+    }
+
+    if (message.type === MessageType.RequestOverlayAnswer) {
+      if (sender.tab) {
+        void chrome.runtime.sendMessage(message).catch(() => undefined)
+      }
+      sendResponse({ ok: true })
+      return false
+    }
+
     return false
   },
 )

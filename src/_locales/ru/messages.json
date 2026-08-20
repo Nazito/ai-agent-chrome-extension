@@ -239,6 +239,36 @@
   "clearCaption": {
     "message": "Очистить текст"
   },
+  "overlayQuestions": {
+    "message": "Вопросы"
+  },
+  "overlayQuestionDismiss": {
+    "message": "Скрыть вопрос"
+  },
+  "overlayQuestionsClose": {
+    "message": "Скрыть все вопросы"
+  },
+  "questionAnswerLoading": {
+    "message": "Готовлю ответ…"
+  },
+  "issueAnswerBadKey": {
+    "message": "Не удалось ответить: ключ {provider} не принят."
+  },
+  "issueAnswerQuota": {
+    "message": "Не удалось ответить: у {provider} закончилась квота."
+  },
+  "issueAnswerRateLimit": {
+    "message": "Не удалось ответить: {provider} временно ограничил запросы."
+  },
+  "issueAnswerModelGone": {
+    "message": "Не удалось ответить: {provider} отключил модель."
+  },
+  "issueAnswerNetwork": {
+    "message": "Не удалось ответить: нет связи с {provider}."
+  },
+  "issueAnswerUnknown": {
+    "message": "Не удалось ответить: {provider} вернул ошибку. {detail}"
+  },
   "captionsOpenError": {
     "message": "Не удалось показать субтитры на вкладке"
   },
