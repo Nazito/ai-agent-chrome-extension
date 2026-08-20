@@ -239,6 +239,36 @@
   "clearCaption": {
     "message": "Clear text"
   },
+  "overlayQuestions": {
+    "message": "Questions"
+  },
+  "overlayQuestionDismiss": {
+    "message": "Hide question"
+  },
+  "overlayQuestionsClose": {
+    "message": "Hide all questions"
+  },
+  "questionAnswerLoading": {
+    "message": "Writing an answer…"
+  },
+  "issueAnswerBadKey": {
+    "message": "Could not answer: the {provider} key was rejected."
+  },
+  "issueAnswerQuota": {
+    "message": "Could not answer: {provider} quota is exhausted."
+  },
+  "issueAnswerRateLimit": {
+    "message": "Could not answer: {provider} is rate-limiting requests."
+  },
+  "issueAnswerModelGone": {
+    "message": "Could not answer: {provider} retired the model."
+  },
+  "issueAnswerNetwork": {
+    "message": "Could not answer: no connection to {provider}."
+  },
+  "issueAnswerUnknown": {
+    "message": "Could not answer: {provider} returned an error. {detail}"
+  },
   "captionsOpenError": {
     "message": "Could not put captions on the tab"
   },

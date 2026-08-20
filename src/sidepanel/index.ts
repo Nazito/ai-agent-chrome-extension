@@ -1,5 +1,5 @@
 import { MicrophoneSession, requestMicrophone } from './mic.js'
-import { transcribeAudio, translateText } from '../shared/llm.js'
+import { answerQuestion, extractQuestions, transcribeAudio, translateText } from '../shared/llm.js'
 import { classifyApiError, NamedError, overlayIssueKey, type ApiFailureKind } from '../shared/errors.js'
 import { MessageType } from '../shared/messages.js'
 import {
@@ -8,6 +8,7 @@ import {
   saveProvider,
   saveProviderKey,
   saveTranslateDirection,
+  uiLanguage,
   type LlmSettings,
   type ProviderId,
   type TranslateDirection,
@@ -42,9 +43,18 @@ let settings: LlmSettings = {
   keys: { openai: '', groq: '', gemini: '' },
 }
 let whisperBusy = false
+let extractBusy = false
 let hintLockUntil = 0
 let liveIssue: { status: string; hint: string } | null = null
 const whisperQueue: Blob[] = []
+const meetingBuffer: string[] = []
+const dismissedQuestions = new Set<string>()
+const visibleQuestions: Array<{ id: string; text: string; key: string }> = []
+let questionSeq = 0
+const MEETING_BUFFER_MAX = 15
+const VISIBLE_QUESTIONS_MAX = 8
+const QUESTION_GATE =
+  /[?？]|(?:^|[^\p{L}])(?:what|why|how|who|when|which|where|whose|whom|can you|could you|would you|will you|do you|did you|is there|are there|should we|shall we|кто|что|как|почему|зачем|когда|где|какой|какая|какие|можно ли|есть ли)(?:$|[^\p{L}])/iu
 
 const mic = new MicrophoneSession({
   onLevel: paintLevel,
@@ -114,19 +124,20 @@ tabToggle.addEventListener('click', () => {
   }
 
   clearLiveIssue()
-  const overlayPromise = enableOnScreenCaptions()
+  const hostPermission = requestHostPermission()
   const streamPromise = pickTabAudio()
   statusEl.classList.remove('error')
   statusEl.textContent = chrome.i18n.getMessage('statusTabRequesting')
   writeHint(chrome.i18n.getMessage('tabRequestHint'))
   tabToggle.disabled = true
-  void startTabListening(streamPromise, overlayPromise)
+  void startTabListening(streamPromise, hostPermission)
 })
 
 captionsToggle.addEventListener('click', () => {
   void enableOnScreenCaptions()
     .then(() => {
       clearLiveIssue()
+      replayOverlayQuestions()
       setHint(chrome.i18n.getMessage('captionsOpened'), 12000)
     })
     .catch((error: unknown) => {
@@ -170,14 +181,22 @@ providerSelect.addEventListener('change', () => {
   syncProviderUi()
 })
 
-chrome.runtime.onMessage.addListener((message: { type?: string; count?: number; target?: 'original' | 'translation' }) => {
-  if (message.type === MessageType.OverlayPlaqueCount && typeof message.count === 'number') {
-    setOverlayPlaques(message.count)
-  }
-  if (message.type === MessageType.ClearOverlayCaption) {
-    clearCaptionBoxes(message.target)
-  }
-})
+chrome.runtime.onMessage.addListener(
+  (message: { type?: string; count?: number; target?: 'original' | 'translation'; id?: string }) => {
+    if (message.type === MessageType.OverlayPlaqueCount && typeof message.count === 'number') {
+      setOverlayPlaques(message.count)
+    }
+    if (message.type === MessageType.ClearOverlayCaption) {
+      clearCaptionBoxes(message.target)
+    }
+    if (message.type === MessageType.DismissOverlayQuestion && message.id) {
+      dismissQuestion(message.id)
+    }
+    if (message.type === MessageType.RequestOverlayAnswer && message.id) {
+      void answerOverlayQuestion(message.id)
+    }
+  },
+)
 
 window.addEventListener('unload', () => {
   void mic.stop()
@@ -226,9 +245,8 @@ async function stopMicListening(): Promise<void> {
 
 async function startTabListening(
   streamPromise: Promise<MediaStream>,
-  overlayPromise: Promise<void>,
+  hostPermission: Promise<void>,
 ): Promise<void> {
-  const overlayResult = overlayPromise.then(() => true).catch((error: unknown) => error)
   try {
     originalEl.replaceChildren()
     translationEl.replaceChildren()
@@ -250,21 +268,27 @@ async function startTabListening(
     tabToggle.disabled = false
   }
 
-  const overlay = await overlayResult
-  if (!tab.active) {
-    return
-  }
-  if (overlay !== true) {
-    reportOverlayIssue(overlay)
-  } else {
+  try {
+    await hostPermission
+    await openCaptionWindow()
+    if (!tab.active) {
+      return
+    }
+    replayOverlayQuestions()
     setHint(chrome.i18n.getMessage('captionsOpened'), 8000)
+  } catch (error) {
+    if (tab.active) {
+      reportOverlayIssue(error)
+    }
   }
 }
 
 async function stopTabListening(): Promise<void> {
   clearLiveIssue()
+  resetQuestions()
   await tab.stop()
   setTabUi(false)
+  void sendOverlay({ type: MessageType.ClearOverlayQuestions })
   void sendOverlay({ type: MessageType.DisableOverlay })
 }
 
@@ -318,6 +342,7 @@ async function drainWhisperQueue(): Promise<void> {
         original,
         translation: '',
       })
+      void detectQuestions(original)
       setHint(chrome.i18n.getMessage(translateDirection === 'en-ru' ? 'tabTranslatingRu' : 'tabTranslatingEn'))
       try {
         const translated = await translateText(settings.provider, currentKey(), original, translateDirection)
@@ -373,9 +398,163 @@ function sendOverlay(
     | { type: typeof MessageType.DisableOverlay }
     | { type: typeof MessageType.ShowOverlayCaption; original: string; translation: string }
     | { type: typeof MessageType.ClearOverlayCaption; target?: 'original' | 'translation' }
-    | { type: typeof MessageType.SetTranslateDirection; direction: TranslateDirection },
+    | { type: typeof MessageType.SetTranslateDirection; direction: TranslateDirection }
+    | { type: typeof MessageType.ShowOverlayQuestion; id: string; question: string }
+    | { type: typeof MessageType.DismissOverlayQuestion; id: string }
+    | { type: typeof MessageType.ShowOverlayAnswer; id: string; answer?: string; error?: string }
+    | { type: typeof MessageType.ClearOverlayQuestions },
 ): void {
   void chrome.runtime.sendMessage(message).catch(() => undefined)
+}
+
+function normalizeQuestion(text: string): string {
+  return text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+}
+
+function isDuplicateQuestion(key: string): boolean {
+  if (dismissedQuestions.has(key)) {
+    return true
+  }
+  return visibleQuestions.some((item) => {
+    if (item.key === key) {
+      return true
+    }
+    const shorter = item.key.length < key.length ? item.key : key
+    const longer = item.key.length < key.length ? key : item.key
+    return longer.includes(shorter) && shorter.length / longer.length > 0.72
+  })
+}
+
+function resetQuestions(): void {
+  meetingBuffer.length = 0
+  dismissedQuestions.clear()
+  visibleQuestions.length = 0
+  questionSeq = 0
+}
+
+function replayOverlayQuestions(): void {
+  for (const item of visibleQuestions) {
+    sendOverlay({ type: MessageType.ShowOverlayQuestion, id: item.id, question: item.text })
+  }
+}
+
+function dismissQuestion(id: string): void {
+  if (id === '*') {
+    for (const item of visibleQuestions) {
+      dismissedQuestions.add(item.key)
+    }
+    visibleQuestions.length = 0
+    return
+  }
+  const index = visibleQuestions.findIndex((item) => item.id === id)
+  if (index < 0) {
+    return
+  }
+  dismissedQuestions.add(visibleQuestions[index].key)
+  visibleQuestions.splice(index, 1)
+}
+
+function pushVisibleQuestion(text: string): void {
+  const key = normalizeQuestion(text)
+  if (key.length < 8 || isDuplicateQuestion(key)) {
+    return
+  }
+  const item = { id: `q-${++questionSeq}`, text, key }
+  visibleQuestions.push(item)
+  while (visibleQuestions.length > VISIBLE_QUESTIONS_MAX) {
+    const dropped = visibleQuestions.shift()
+    if (dropped) {
+      sendOverlay({ type: MessageType.DismissOverlayQuestion, id: dropped.id })
+    }
+  }
+  sendOverlay({ type: MessageType.ShowOverlayQuestion, id: item.id, question: item.text })
+}
+
+async function detectQuestions(original: string): Promise<void> {
+  meetingBuffer.push(original)
+  if (meetingBuffer.length > MEETING_BUFFER_MAX) {
+    meetingBuffer.shift()
+  }
+  if (extractBusy || !currentKey() || !QUESTION_GATE.test(original)) {
+    return
+  }
+  extractBusy = true
+  const windowText = meetingBuffer.slice(-3).join('\n')
+  try {
+    const found = await extractQuestions(settings.provider, currentKey(), windowText)
+    if (!tab.active) {
+      return
+    }
+    for (const question of found) {
+      pushVisibleQuestion(question)
+    }
+  } catch {
+    // Detection is best-effort; do not surface as a live STT failure.
+  } finally {
+    extractBusy = false
+  }
+}
+
+async function answerOverlayQuestion(id: string): Promise<void> {
+  const item = visibleQuestions.find((entry) => entry.id === id)
+  if (!item) {
+    return
+  }
+  persistApiKey()
+  if (!currentKey()) {
+    sendOverlay({
+      type: MessageType.ShowOverlayAnswer,
+      id,
+      error: chrome.i18n.getMessage('tabNeedsKey'),
+    })
+    return
+  }
+  try {
+    const answer = await answerQuestion(
+      settings.provider,
+      currentKey(),
+      item.text,
+      meetingBuffer.join('\n'),
+      uiLanguage(),
+    )
+    if (!answer) {
+      sendOverlay({
+        type: MessageType.ShowOverlayAnswer,
+        id,
+        error: formatAnswerIssue('empty'),
+      })
+      return
+    }
+    sendOverlay({ type: MessageType.ShowOverlayAnswer, id, answer })
+  } catch (error) {
+    sendOverlay({
+      type: MessageType.ShowOverlayAnswer,
+      id,
+      error: formatAnswerIssue(classifyApiError(error), error),
+    })
+  }
+}
+
+function formatAnswerIssue(kind: ApiFailureKind | 'empty', error?: unknown): string {
+  const suffix =
+    kind === 'empty'
+      ? 'Unknown'
+      : kind === 'badKey'
+        ? 'BadKey'
+        : kind === 'quota'
+          ? 'Quota'
+          : kind === 'rateLimit'
+            ? 'RateLimit'
+            : kind === 'modelGone'
+              ? 'ModelGone'
+              : kind === 'network'
+                ? 'Network'
+                : 'Unknown'
+  const template =
+    chrome.i18n.getMessage(`issueAnswer${suffix}`) || chrome.i18n.getMessage('issueAnswerUnknown')
+  return template
+    .replaceAll('{provider}', providerTitle())
+    .replaceAll('{detail}', error instanceof Error ? error.message : '')
 }
 
 function clearCaptionBoxes(target?: 'original' | 'translation'): void {
@@ -392,7 +571,7 @@ function requestCaptionClear(target?: 'original' | 'translation'): void {
   sendOverlay({ type: MessageType.ClearOverlayCaption, target })
 }
 
-async function enableOnScreenCaptions(): Promise<void> {
+async function requestHostPermission(): Promise<void> {
   let granted = false
   try {
     granted = await chrome.permissions.request({ origins: ['http://*/*', 'https://*/*'] })
@@ -407,6 +586,10 @@ async function enableOnScreenCaptions(): Promise<void> {
       throw new NamedError('overlay-denied', chrome.i18n.getMessage('issueOverlayDenied'))
     }
   }
+}
+
+async function enableOnScreenCaptions(): Promise<void> {
+  await requestHostPermission()
   await openCaptionWindow()
 }
 
