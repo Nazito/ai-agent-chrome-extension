@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="42%" r="62%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#d7eef4"/>
+    </radialGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#glow)"/>
+  <g fill="none" stroke="#4a63b5" stroke-width="5" stroke-linecap="round" transform="translate(64 64)">
+    <polygon points="0,-40 28.28,-28.28 40,0 28.28,28.28 0,40 -28.28,28.28 -40,0 -28.28,-28.28"/>
+  </g>
+  <g fill="#4a63b5" stroke="#4a63b5" transform="translate(64 64)">
+    <g transform="translate(0 -40)"><circle r="8.2" fill="none" stroke-width="4.6"/><circle r="3.1"/></g>
+    <g transform="rotate(45)"><g transform="translate(0 -40)"><circle r="8.2" fill="none" stroke-width="4.6"/><circle r="3.1"/></g></g>
+    <g transform="rotate(90)"><g transform="translate(0 -40)"><circle r="8.2" fill="none" stroke-width="4.6"/><circle r="3.1"/></g></g>
+    <g transform="rotate(135)"><g transform="translate(0 -40)"><circle r="8.2" fill="none" stroke-width="4.6"/><circle r="3.1"/></g></g>
+    <g transform="rotate(180)"><g transform="translate(0 -40)"><circle r="8.2" fill="none" stroke-width="4.6"/><circle r="3.1"/></g></g>
+    <g transform="rotate(225)"><g transform="translate(0 -40)"><circle r="8.2" fill="none" stroke-width="4.6"/><circle r="3.1"/></g></g>
+    <g transform="rotate(270)"><g transform="translate(0 -40)"><circle r="8.2" fill="none" stroke-width="4.6"/><circle r="3.1"/></g></g>
+    <g transform="rotate(315)"><g transform="translate(0 -40)"><circle r="8.2" fill="none" stroke-width="4.6"/><circle r="3.1"/></g></g>
+  </g>
+</svg>
