@@ -7,7 +7,6 @@ import {
   loadTranslateDirection,
   saveProvider,
   saveProviderKey,
-  saveTranslateDirection,
   uiLanguage,
   type LlmSettings,
   type ProviderId,
@@ -20,10 +19,9 @@ const hintEl = document.getElementById('starter-body')!
 const micToggle = document.getElementById('mic-toggle') as HTMLButtonElement
 const tabToggle = document.getElementById('tab-toggle') as HTMLButtonElement
 const captionsToggle = document.getElementById('captions-toggle') as HTMLButtonElement
-const directionToggle = document.getElementById('direction-toggle') as HTMLButtonElement
-const directionTitle = document.getElementById('direction-title')!
 const sidebarCaptionsToggle = document.getElementById('sidebar-captions-toggle') as HTMLButtonElement
-const waveEl = document.getElementById('wave')!
+const waveEl = document.getElementById('wave') as HTMLCanvasElement
+const waveCtx = waveEl.getContext('2d')!
 const coreEl = document.getElementById('core-value')!
 const linkEl = document.getElementById('link-value')!
 const frameEl = document.querySelector('.frame') as HTMLElement
@@ -36,7 +34,14 @@ const providerSelect = document.getElementById('provider') as HTMLSelectElement
 const apiKeyLabel = document.getElementById('api-key-label')!
 const apiKeyHint = document.getElementById('api-key-hint')!
 const signalEl = document.getElementById('signal-value')!
-const waveBars = Array.from(waveEl.querySelectorAll('span'))
+
+const WAVE_POINTS = 48
+const waveDisplay = new Float32Array(WAVE_POINTS).fill(0.1)
+let waveLive = false
+let waveBands: number[] = []
+let waveLevel = 0
+let waveWidth = 0
+let waveHeight = 0
 
 let settings: LlmSettings = {
   provider: 'openai',
@@ -86,6 +91,17 @@ syncLayout()
 syncCaptionsButton()
 syncDirectionUi()
 void chrome.runtime.sendMessage({ type: MessageType.RequestPlaqueCount }).catch(() => undefined)
+reportSidePanel()
+window.addEventListener('resize', reportSidePanel)
+window.addEventListener('pagehide', () => {
+  void chrome.storage.local.set({ sidePanelOpen: false })
+})
+document.addEventListener('visibilitychange', () => {
+  void chrome.storage.local.set({
+    sidePanelOpen: document.visibilityState === 'visible',
+    sidePanelWidth: Math.round(window.innerWidth),
+  })
+})
 
 void chrome.storage.local.get({ sidebarCaptionsHidden: true }).then((stored) => {
   hideSidebarCaptions = stored.sidebarCaptionsHidden !== false
@@ -149,16 +165,6 @@ sidebarCaptionsToggle.addEventListener('click', () => {
   hideSidebarCaptions = !hideSidebarCaptions
   void chrome.storage.local.set({ sidebarCaptionsHidden: hideSidebarCaptions })
   syncLayout()
-})
-
-directionToggle.addEventListener('click', () => {
-  translateDirection = translateDirection === 'en-ru' ? 'ru-en' : 'en-ru'
-  void saveTranslateDirection(translateDirection)
-  syncDirectionUi()
-  void chrome.runtime.sendMessage({
-    type: MessageType.SetTranslateDirection,
-    direction: translateDirection,
-  })
 })
 
 clearOriginal.addEventListener('click', () => {
@@ -624,8 +630,6 @@ function syncCaptionsButton(): void {
 
 function syncDirectionUi(): void {
   const enToRu = translateDirection === 'en-ru'
-  directionTitle.textContent = chrome.i18n.getMessage(enToRu ? 'directionEnRu' : 'directionRuEn')
-  labelButton(directionToggle, enToRu ? 'directionHintEnRu' : 'directionHintRuEn')
   document.getElementById('original-label')!.textContent = chrome.i18n.getMessage(
     enToRu ? 'originalLabel' : 'translationLabel',
   )
@@ -731,15 +735,20 @@ function labelButton(button: HTMLButtonElement, messageKey: string): void {
   button.setAttribute('aria-label', label)
 }
 
+function reportSidePanel(): void {
+  void chrome.storage.local.set({
+    sidePanelOpen: true,
+    sidePanelWidth: Math.round(window.innerWidth),
+  })
+}
+
 function paintLevel(level: number, bands: number[]): void {
   frameEl.classList.add('live')
   waveEl.classList.add('live')
   frameEl.style.setProperty('--level', String(level))
-  waveBars.forEach((bar, index) => {
-    const value = bands[index] ?? level
-    bar.style.height = `${4 + value * 12}px`
-    bar.style.opacity = String(0.4 + value * 0.6)
-  })
+  waveLive = true
+  waveLevel = level
+  waveBands = bands
 }
 
 function setMicUi(on: boolean): void {
@@ -834,8 +843,123 @@ function appendCaption(host: HTMLElement, text: string): void {
 }
 
 function clearWave(): void {
-  waveBars.forEach((bar) => {
-    bar.style.height = ''
-    bar.style.opacity = ''
-  })
+  waveLive = false
+  waveLevel = 0
+  waveBands = []
 }
+
+function sizeWave(): void {
+  const dpr = window.devicePixelRatio || 1
+  const width = Math.max(1, Math.round(waveEl.clientWidth * dpr))
+  const height = Math.max(1, Math.round(waveEl.clientHeight * dpr))
+  if (width === waveWidth && height === waveHeight) {
+    return
+  }
+  waveWidth = width
+  waveHeight = height
+  waveEl.width = width
+  waveEl.height = height
+}
+
+function waveTarget(index: number, now: number): number {
+  if (!waveLive) {
+    const x = index / (WAVE_POINTS - 1)
+    const a = 0.5 + 0.5 * Math.sin(now / 183 + x * 12.6)
+    const b = 0.5 + 0.5 * Math.sin(now / 255 + x * 7.1)
+    const c = 0.5 + 0.5 * Math.sin(now / 140 + x * 18.4)
+    return 0.1 + 0.34 * a + 0.18 * b + 0.08 * c
+  }
+  const src = waveBands.length > 0 ? waveBands : [waveLevel]
+  const pos = (index / (WAVE_POINTS - 1)) * (src.length - 1)
+  const left = Math.floor(pos)
+  const right = Math.min(src.length - 1, left + 1)
+  const mix = (1 - Math.cos((pos - left) * Math.PI)) / 2
+  const value = (src[left] ?? waveLevel) * (1 - mix) + (src[right] ?? waveLevel) * mix
+  return Math.min(1, 0.08 + value * 0.92)
+}
+
+function drawWave(now: number): void {
+  sizeWave()
+  const ease = waveLive ? 0.32 : 0.14
+  for (let i = 0; i < WAVE_POINTS; i += 1) {
+    waveDisplay[i] += (waveTarget(i, now) - waveDisplay[i]) * ease
+  }
+
+  const width = waveEl.width
+  const height = waveEl.height
+  const mid = height * 0.5
+  const amp = height * 0.42
+  const dpr = window.devicePixelRatio || 1
+
+  waveCtx.clearRect(0, 0, width, height)
+  waveCtx.strokeStyle = 'rgba(74, 99, 181, 0.18)'
+  waveCtx.lineWidth = dpr
+  waveCtx.beginPath()
+  waveCtx.moveTo(0, mid)
+  waveCtx.lineTo(width, mid)
+  waveCtx.stroke()
+
+  waveCtx.beginPath()
+  for (let i = 0; i < WAVE_POINTS; i += 1) {
+    const x = (i / (WAVE_POINTS - 1)) * width
+    const y = mid - waveDisplay[i] * amp
+    if (i === 0) {
+      waveCtx.moveTo(x, y)
+    } else {
+      waveCtx.lineTo(x, y)
+    }
+  }
+  for (let i = WAVE_POINTS - 1; i >= 0; i -= 1) {
+    const x = (i / (WAVE_POINTS - 1)) * width
+    waveCtx.lineTo(x, mid + waveDisplay[i] * amp)
+  }
+  waveCtx.closePath()
+  const fill = waveCtx.createLinearGradient(0, mid - amp, 0, mid + amp)
+  fill.addColorStop(0, 'rgba(142, 160, 232, 0.5)')
+  fill.addColorStop(0.5, 'rgba(74, 99, 181, 0.16)')
+  fill.addColorStop(1, 'rgba(142, 160, 232, 0.5)')
+  waveCtx.fillStyle = fill
+  waveCtx.fill()
+
+  waveCtx.beginPath()
+  for (let i = 0; i < WAVE_POINTS; i += 1) {
+    const x = (i / (WAVE_POINTS - 1)) * width
+    const y = mid - waveDisplay[i] * amp
+    if (i === 0) {
+      waveCtx.moveTo(x, y)
+    } else {
+      waveCtx.lineTo(x, y)
+    }
+  }
+  waveCtx.strokeStyle = waveLive ? 'rgba(74, 99, 181, 0.95)' : 'rgba(74, 99, 181, 0.55)'
+  waveCtx.lineWidth = 1.25 * dpr
+  waveCtx.lineJoin = 'round'
+  waveCtx.lineCap = 'round'
+  waveCtx.stroke()
+
+  if (waveLive) {
+    let peak = 0
+    for (let i = 1; i < WAVE_POINTS; i += 1) {
+      if (waveDisplay[i] > waveDisplay[peak]) {
+        peak = i
+      }
+    }
+    if (waveDisplay[peak] > 0.32) {
+      waveCtx.beginPath()
+      waveCtx.fillStyle = 'rgba(201, 146, 42, 0.92)'
+      waveCtx.arc((peak / (WAVE_POINTS - 1)) * width, mid - waveDisplay[peak] * amp, 2.1 * dpr, 0, Math.PI * 2)
+      waveCtx.fill()
+    }
+  }
+}
+
+function loopWave(now: number): void {
+  drawWave(now)
+  requestAnimationFrame(loopWave)
+}
+
+new ResizeObserver(() => {
+  waveWidth = 0
+  sizeWave()
+}).observe(waveEl)
+requestAnimationFrame(loopWave)

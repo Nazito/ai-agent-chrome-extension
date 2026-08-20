@@ -2,13 +2,38 @@ type HudHandle = { teardown: () => void; enable: () => void }
 type PlaqueKind = 'original' | 'translation'
 
 const overlayWindow = window as Window & { __jarvisHud?: HudHandle; __jarvisHudRev?: number }
-const HUD_REV = 14
+const HUD_REV = 18
 const STYLE_ID = 'jarvis-hud-style'
 const HOST_IDS = {
   original: 'jarvis-plaque-original',
   translation: 'jarvis-plaque-translation',
   questions: 'jarvis-plaque-questions',
 } as const
+const PLAQUE_MIN_W = 220
+const PLAQUE_MIN_H = 128
+let sidePanelOpen = false
+let sidePanelWidth = 360
+const plaqueSizes: Record<string, { w: number; h: number }> = {}
+let plaqueSaveTimer = 0
+
+void chrome.storage.local.get({ sidePanelOpen: false, sidePanelWidth: 360, plaqueSizes: {} }).then((stored) => {
+  sidePanelOpen = stored.sidePanelOpen === true
+  sidePanelWidth = Number(stored.sidePanelWidth) || 360
+  Object.assign(plaqueSizes, stored.plaqueSizes ?? {})
+  clampMountedPlaques()
+})
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') {
+    return
+  }
+  if (changes.sidePanelOpen) {
+    sidePanelOpen = changes.sidePanelOpen.newValue === true
+  }
+  if (changes.sidePanelWidth) {
+    sidePanelWidth = Number(changes.sidePanelWidth.newValue) || 360
+  }
+  clampMountedPlaques()
+})
 
 if (window === window.top) {
   overlayWindow.__jarvisHud?.teardown()
@@ -40,31 +65,40 @@ function startOverlay(): HudHandle {
       all: initial;
       position: fixed !important;
       z-index: 2147483647 !important;
-      width: min(420px, 42vw) !important;
+      width: min(420px, calc(100vw - var(--jarvis-right, 16px) - 40px)) !important;
+      height: 188px !important;
       margin: 0 !important;
       padding: 0 !important;
       display: none !important;
       box-sizing: border-box !important;
+      overflow: hidden !important;
       pointer-events: auto !important;
+      border: 1px solid rgba(74, 99, 181, 0.22) !important;
+      border-radius: 16px !important;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.28), rgba(232, 236, 250, 0.1)) !important;
+      backdrop-filter: blur(16px) saturate(1.25) !important;
+      -webkit-backdrop-filter: blur(16px) saturate(1.25) !important;
+      box-shadow: 0 10px 28px rgba(18, 48, 58, 0.12) !important;
     }
     #${HOST_IDS.original} {
-      left: 24px !important;
-      bottom: 24px !important;
+      left: 16px !important;
+      bottom: 16px !important;
       top: auto !important;
       right: auto !important;
     }
     #${HOST_IDS.translation} {
-      right: 24px !important;
-      bottom: 24px !important;
+      right: var(--jarvis-right, 16px) !important;
+      bottom: 16px !important;
       top: auto !important;
       left: auto !important;
     }
     #${HOST_IDS.questions} {
       left: 50% !important;
-      top: 24px !important;
+      top: 16px !important;
       right: auto !important;
       bottom: auto !important;
-      width: min(520px, 56vw) !important;
+      width: min(520px, calc(100vw - var(--jarvis-right, 16px) - 32px)) !important;
+      height: 168px !important;
       transform: translateX(-50%) !important;
     }
     #${HOST_IDS.original}[data-open="1"],
@@ -76,7 +110,7 @@ function startOverlay(): HudHandle {
       #${HOST_IDS.original},
       #${HOST_IDS.translation},
       #${HOST_IDS.questions} {
-        width: min(720px, 90vw) !important;
+        width: min(720px, calc(100vw - 32px)) !important;
       }
       #${HOST_IDS.original} {
         left: 50% !important;
@@ -338,6 +372,411 @@ function startOverlay(): HudHandle {
   }
 }
 
+function plaquePads(): { left: number; right: number; top: number; bottom: number } {
+  const gap = Math.max(0, window.outerWidth - window.innerWidth)
+  const overlaying = sidePanelOpen && sidePanelWidth > 200 && gap < sidePanelWidth * 0.5
+  const right = overlaying ? Math.min(sidePanelWidth + 12, Math.max(200, window.innerWidth * 0.4)) : 16
+  return { left: 16, right, top: 16, bottom: 16 }
+}
+
+function clampMountedPlaques(): void {
+  const pads = plaquePads()
+  const value = `${Math.round(pads.right)}px`
+  for (const id of Object.values(HOST_IDS)) {
+    const host = document.getElementById(id)
+    if (!host) {
+      continue
+    }
+    host.style.setProperty('--jarvis-right', value)
+    if (host.getAttribute('data-open') === '1' || host.style.display === 'block') {
+      clampPlaque(host)
+    }
+  }
+}
+
+function clampPlaque(host: HTMLElement): void {
+  if (host.offsetWidth < 8) {
+    return
+  }
+  const pads = plaquePads()
+  const maxW = Math.max(PLAQUE_MIN_W, window.innerWidth - pads.left - pads.right)
+  const maxH = Math.max(PLAQUE_MIN_H, window.innerHeight - pads.top - pads.bottom)
+  const rect = host.getBoundingClientRect()
+  const width = Math.min(Math.max(PLAQUE_MIN_W, rect.width), maxW)
+  const height = Math.min(Math.max(PLAQUE_MIN_H, rect.height), maxH)
+  const left = Math.min(Math.max(pads.left, rect.left), window.innerWidth - pads.right - width)
+  const top = Math.min(Math.max(pads.top, rect.top), window.innerHeight - pads.bottom - height)
+  setImportantPx(host, 'width', width)
+  setImportantPx(host, 'height', height)
+  setImportantPx(host, 'left', left)
+  setImportantPx(host, 'top', top)
+  host.style.setProperty('right', 'auto', 'important')
+  host.style.setProperty('bottom', 'auto', 'important')
+  host.style.setProperty('transform', 'none', 'important')
+}
+
+function setImportantPx(host: HTMLElement, prop: string, value: number): void {
+  const next = `${Math.round(value)}px`
+  if (host.style.getPropertyValue(prop) === next) {
+    return
+  }
+  host.style.setProperty(prop, next, 'important')
+}
+
+function applySavedSize(host: HTMLElement): void {
+  const saved = plaqueSizes[host.id]
+  if (!saved) {
+    return
+  }
+  setImportantPx(host, 'width', saved.w)
+  setImportantPx(host, 'height', saved.h)
+}
+
+function persistPlaqueSize(host: HTMLElement): void {
+  plaqueSizes[host.id] = { w: host.offsetWidth, h: host.offsetHeight }
+  window.clearTimeout(plaqueSaveTimer)
+  plaqueSaveTimer = window.setTimeout(() => {
+    void chrome.storage.local.set({ plaqueSizes })
+  }, 180)
+}
+
+function bindPlaqueFrame(host: HTMLElement, handle: HTMLElement, grip: HTMLElement, ignore: HTMLElement[]): () => void {
+  let dragging = false
+  let resizing = false
+  let offsetX = 0
+  let offsetY = 0
+  let startX = 0
+  let startY = 0
+  let startLeft = 0
+  let startTop = 0
+  let startWidth = 0
+  let startHeight = 0
+
+  const onHandleDown = (event: PointerEvent) => {
+    const target = event.target as Node
+    if (ignore.some((node) => node === target || node.contains(target))) {
+      return
+    }
+    dragging = true
+    const rect = host.getBoundingClientRect()
+    offsetX = event.clientX - rect.left
+    offsetY = event.clientY - rect.top
+    clampPlaque(host)
+    handle.setPointerCapture(event.pointerId)
+  }
+
+  const onHandleMove = (event: PointerEvent) => {
+    if (!dragging) {
+      return
+    }
+    const pads = plaquePads()
+    const width = host.offsetWidth
+    const height = host.offsetHeight
+    const left = Math.min(
+      Math.max(pads.left, event.clientX - offsetX),
+      window.innerWidth - pads.right - width,
+    )
+    const top = Math.min(
+      Math.max(pads.top, event.clientY - offsetY),
+      window.innerHeight - pads.bottom - height,
+    )
+    setImportantPx(host, 'left', left)
+    setImportantPx(host, 'top', top)
+  }
+
+  const stopDrag = () => {
+    dragging = false
+  }
+
+  const onGripDown = (event: PointerEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    resizing = true
+    clampPlaque(host)
+    const rect = host.getBoundingClientRect()
+    startX = event.clientX
+    startY = event.clientY
+    startLeft = rect.left
+    startTop = rect.top
+    startWidth = rect.width
+    startHeight = rect.height
+    grip.setPointerCapture(event.pointerId)
+  }
+
+  const onGripMove = (event: PointerEvent) => {
+    if (!resizing) {
+      return
+    }
+    const pads = plaquePads()
+    const maxW = Math.max(PLAQUE_MIN_W, window.innerWidth - pads.left - pads.right)
+    const maxH = Math.max(PLAQUE_MIN_H, window.innerHeight - pads.top - pads.bottom)
+    const dx = event.clientX - startX
+    const dy = event.clientY - startY
+    let width = Math.min(Math.max(PLAQUE_MIN_W, startWidth + dx), maxW)
+    let height = Math.min(Math.max(PLAQUE_MIN_H, startHeight + dy), maxH)
+    let left = startLeft
+    let top = startTop
+    const maxRight = window.innerWidth - pads.right
+    const maxBottom = window.innerHeight - pads.bottom
+    if (left + width > maxRight) {
+      left = maxRight - width
+    }
+    if (left < pads.left) {
+      left = pads.left
+      width = Math.min(width, maxRight - left)
+    }
+    if (top + height > maxBottom) {
+      top = maxBottom - height
+    }
+    if (top < pads.top) {
+      top = pads.top
+      height = Math.min(height, maxBottom - top)
+    }
+    setImportantPx(host, 'width', width)
+    setImportantPx(host, 'height', height)
+    setImportantPx(host, 'left', left)
+    setImportantPx(host, 'top', top)
+    host.style.setProperty('right', 'auto', 'important')
+    host.style.setProperty('bottom', 'auto', 'important')
+    persistPlaqueSize(host)
+  }
+
+  const stopResize = () => {
+    if (resizing) {
+      persistPlaqueSize(host)
+    }
+    resizing = false
+  }
+
+  const onViewport = () => clampPlaque(host)
+
+  handle.addEventListener('pointerdown', onHandleDown)
+  handle.addEventListener('pointermove', onHandleMove)
+  handle.addEventListener('pointerup', stopDrag)
+  handle.addEventListener('pointercancel', stopDrag)
+  grip.addEventListener('pointerdown', onGripDown)
+  grip.addEventListener('pointermove', onGripMove)
+  grip.addEventListener('pointerup', stopResize)
+  grip.addEventListener('pointercancel', stopResize)
+  window.addEventListener('resize', onViewport)
+
+  applySavedSize(host)
+  host.style.setProperty('--jarvis-right', `${Math.round(plaquePads().right)}px`)
+  requestAnimationFrame(() => clampPlaque(host))
+
+  return () => {
+    handle.removeEventListener('pointerdown', onHandleDown)
+    handle.removeEventListener('pointermove', onHandleMove)
+    handle.removeEventListener('pointerup', stopDrag)
+    handle.removeEventListener('pointercancel', stopDrag)
+    grip.removeEventListener('pointerdown', onGripDown)
+    grip.removeEventListener('pointermove', onGripMove)
+    grip.removeEventListener('pointerup', stopResize)
+    grip.removeEventListener('pointercancel', stopResize)
+    window.removeEventListener('resize', onViewport)
+  }
+}
+
+function plaqueCardCss(): string {
+  return `
+    .card {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      box-sizing: border-box;
+      height: 100%;
+      min-height: 0;
+      padding: 12px 14px 16px;
+      border: 0;
+      border-radius: 16px;
+      background: transparent;
+      color: #12303a;
+      font-family: "Avenir Next", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+    }
+    .grip {
+      position: absolute;
+      right: 1px;
+      bottom: 1px;
+      width: 16px;
+      height: 16px;
+      cursor: nwse-resize;
+    }
+    .grip::before {
+      content: "";
+      position: absolute;
+      right: 4px;
+      bottom: 4px;
+      width: 8px;
+      height: 8px;
+      border-right: 2px solid rgba(53, 74, 140, 0.7);
+      border-bottom: 2px solid rgba(53, 74, 140, 0.7);
+    }
+    .handle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+      user-select: none;
+      cursor: grab;
+    }
+    .title {
+      color: #4a63b5;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+    }
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+    .clear,
+    .close,
+    .x {
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: #4a63b5;
+      cursor: pointer;
+    }
+    .close,
+    .x {
+      font: 700 18px/1 ui-sans-serif, system-ui, sans-serif;
+    }
+    .clear svg {
+      display: block;
+      width: 13px;
+      height: 13px;
+      margin: 0 auto;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .caption {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      color: #12303a;
+      font-size: 15px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+    .caption::-webkit-scrollbar,
+    .list::-webkit-scrollbar,
+    .answer::-webkit-scrollbar {
+      width: 8px;
+    }
+    .caption::-webkit-scrollbar-track,
+    .list::-webkit-scrollbar-track {
+      background: rgba(74, 99, 181, 0.08);
+    }
+    .caption::-webkit-scrollbar-thumb,
+    .list::-webkit-scrollbar-thumb,
+    .answer::-webkit-scrollbar-thumb {
+      background: rgba(74, 99, 181, 0.35);
+      border-radius: 8px;
+    }
+    .caption p,
+    .caption-line {
+      margin: 0;
+    }
+    .caption-line {
+      display: grid;
+      grid-template-rows: 0fr;
+      opacity: 0;
+      transform: translateY(8px);
+      filter: blur(3px);
+      transition:
+        grid-template-rows 0.48s ease,
+        opacity 0.4s ease,
+        transform 0.48s ease,
+        filter 0.4s ease;
+    }
+    .caption-line.in {
+      grid-template-rows: 1fr;
+      opacity: 1;
+      transform: none;
+      filter: none;
+    }
+    .caption-line > span {
+      overflow: hidden;
+      min-height: 0;
+      display: block;
+      padding-bottom: 8px;
+    }
+    .hint {
+      color: #5d7d88;
+    }
+    .list {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .row {
+      padding: 8px 0;
+      border-top: 1px solid rgba(74, 99, 181, 0.14);
+    }
+    .row:first-child {
+      border-top: 0;
+      padding-top: 0;
+    }
+    .head {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .ask {
+      flex: 1;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: #12303a;
+      font: 500 14px/1.4 "Avenir Next", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+      text-align: left;
+      cursor: pointer;
+    }
+    .ask:hover {
+      color: #4a63b5;
+    }
+    .answer {
+      margin: 6px 0 0;
+      max-height: 6.4em;
+      overflow-y: auto;
+      padding: 8px;
+      border: 1px solid rgba(74, 99, 181, 0.16);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.28);
+      color: #234854;
+      font-size: 13px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+    }
+    .answer.error {
+      color: #d24b5c;
+      border-color: rgba(210, 75, 92, 0.4);
+      background: rgba(255, 236, 238, 0.42);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .caption-line {
+        grid-template-rows: 1fr;
+        opacity: 1;
+        transform: none;
+        filter: none;
+        transition: none;
+      }
+    }
+  `
+}
+
 function sweepOldHosts(): void {
   document
     .querySelectorAll(
@@ -382,137 +821,20 @@ function createPlaque(options: {
       </div>
     </div>
     <div class="caption"></div>
+    <div class="grip" aria-hidden="true"></div>
   `
   const css = document.createElement('style')
-  css.textContent = `
-    .card {
-      box-sizing: border-box;
-      padding: 10px 12px 12px;
-      border: 1px solid rgba(122, 240, 255, 0.35);
-      background: rgba(5, 12, 18, 0.78);
-      backdrop-filter: blur(16px) saturate(1.4);
-      -webkit-backdrop-filter: blur(16px) saturate(1.4);
-      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), inset 0 0 24px rgba(122, 240, 255, 0.06);
-      color: #e8fbff;
-      font-family: "Avenir Next", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
-    }
-    .handle {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      margin-bottom: 8px;
-      user-select: none;
-      cursor: grab;
-    }
-    .title {
-      color: #e2b45a;
-      font-size: 10px;
-      font-weight: 500;
-      letter-spacing: 0.2em;
-      text-transform: uppercase;
-    }
-    .actions {
-      display: flex;
-      align-items: center;
-      gap: 2px;
-    }
-    .clear,
-    .close {
-      width: 22px;
-      height: 22px;
-      padding: 0;
-      border: 0;
-      background: transparent;
-      color: #7af0ff;
-      cursor: pointer;
-    }
-    .close {
-      font: 700 18px/1 ui-sans-serif, system-ui, sans-serif;
-    }
-    .clear svg {
-      display: block;
-      width: 13px;
-      height: 13px;
-      margin: 0 auto;
-      fill: none;
-      stroke: currentColor;
-      stroke-width: 1.8;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
-    .caption {
-      height: calc(16em / 1.5);
-      overflow-y: auto;
-      overscroll-behavior: contain;
-      color: #e8fbff;
-      font-size: 15px;
-      line-height: 1.45;
-      white-space: pre-wrap;
-    }
-    .caption::-webkit-scrollbar {
-      width: 8px;
-    }
-    .caption::-webkit-scrollbar-track {
-      background: rgba(122, 240, 255, 0.08);
-    }
-    .caption::-webkit-scrollbar-thumb {
-      background: rgba(122, 240, 255, 0.45);
-    }
-    .caption p,
-    .caption-line {
-      margin: 0;
-    }
-    .caption-line {
-      display: grid;
-      grid-template-rows: 0fr;
-      opacity: 0;
-      transform: translateY(8px);
-      filter: blur(3px);
-      transition:
-        grid-template-rows 0.48s ease,
-        opacity 0.4s ease,
-        transform 0.48s ease,
-        filter 0.4s ease;
-    }
-    .caption-line.in {
-      grid-template-rows: 1fr;
-      opacity: 1;
-      transform: none;
-      filter: none;
-    }
-    .caption-line > span {
-      overflow: hidden;
-      min-height: 0;
-      display: block;
-      padding-bottom: 8px;
-    }
-    .hint {
-      color: #7d97a3;
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .caption-line {
-        grid-template-rows: 1fr;
-        opacity: 1;
-        transform: none;
-        filter: none;
-        transition: none;
-      }
-    }
-  `
+  css.textContent = plaqueCardCss()
   shadow.append(css, card)
   const titleEl = shadow.querySelector('.title') as HTMLElement
   const close = shadow.querySelector('.close') as HTMLButtonElement
   const clearBtn = shadow.querySelector('.clear') as HTMLButtonElement
   const handle = shadow.querySelector('.handle') as HTMLElement
+  const grip = shadow.querySelector('.grip') as HTMLElement
   const captionEl = shadow.querySelector('.caption') as HTMLElement
   titleEl.textContent = options.title
   close.setAttribute('aria-label', chrome.i18n.getMessage('overlayClose') || 'Close')
   clearBtn.setAttribute('aria-label', chrome.i18n.getMessage('clearCaption') || 'Clear')
-
-  let dragging = false
-  let offsetX = 0
-  let offsetY = 0
 
   close.addEventListener('pointerdown', (event) => event.stopPropagation())
   close.addEventListener('click', (event) => {
@@ -524,36 +846,7 @@ function createPlaque(options: {
     event.stopPropagation()
     options.onClear()
   })
-
-  handle.addEventListener('pointerdown', (event) => {
-    const target = event.target as Node
-    if (target === close || close.contains(target) || target === clearBtn || clearBtn.contains(target)) {
-      return
-    }
-    dragging = true
-    const rect = host.getBoundingClientRect()
-    offsetX = event.clientX - rect.left
-    offsetY = event.clientY - rect.top
-    host.style.setProperty('left', `${rect.left}px`, 'important')
-    host.style.setProperty('top', `${rect.top}px`, 'important')
-    host.style.setProperty('right', 'auto', 'important')
-    host.style.setProperty('bottom', 'auto', 'important')
-    host.style.setProperty('transform', 'none', 'important')
-    handle.setPointerCapture(event.pointerId)
-  })
-  handle.addEventListener('pointermove', (event) => {
-    if (!dragging) {
-      return
-    }
-    host.style.setProperty('left', `${Math.max(8, event.clientX - offsetX)}px`, 'important')
-    host.style.setProperty('top', `${Math.max(8, event.clientY - offsetY)}px`, 'important')
-  })
-  handle.addEventListener('pointerup', () => {
-    dragging = false
-  })
-  handle.addEventListener('pointercancel', () => {
-    dragging = false
-  })
+  const unbindFrame = bindPlaqueFrame(host, handle, grip, [close, clearBtn])
 
   return {
     mount(root) {
@@ -564,6 +857,9 @@ function createPlaque(options: {
     setOpen(open) {
       host.setAttribute('data-open', open ? '1' : '0')
       host.style.setProperty('display', open ? 'block' : 'none', 'important')
+      if (open) {
+        requestAnimationFrame(() => clampPlaque(host))
+      }
     },
     setTitle(text) {
       titleEl.textContent = text
@@ -594,6 +890,7 @@ function createPlaque(options: {
       captionEl.replaceChildren()
     },
     remove() {
+      unbindFrame()
       host.remove()
     },
   }
@@ -638,156 +935,25 @@ function createQuestionsPlaque(options: {
       <button class="close" type="button">×</button>
     </div>
     <div class="list"></div>
+    <div class="grip" aria-hidden="true"></div>
   `
   const css = document.createElement('style')
-  css.textContent = `
-    .card {
-      box-sizing: border-box;
-      padding: 10px 12px 12px;
-      border: 1px solid rgba(122, 240, 255, 0.35);
-      background: rgba(5, 12, 18, 0.78);
-      backdrop-filter: blur(16px) saturate(1.4);
-      -webkit-backdrop-filter: blur(16px) saturate(1.4);
-      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), inset 0 0 24px rgba(122, 240, 255, 0.06);
-      color: #e8fbff;
-      font-family: "Avenir Next", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
-    }
-    .handle {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      margin-bottom: 8px;
-      user-select: none;
-      cursor: grab;
-    }
-    .title {
-      color: #e2b45a;
-      font-size: 10px;
-      font-weight: 500;
-      letter-spacing: 0.2em;
-      text-transform: uppercase;
-    }
-    .close {
-      width: 22px;
-      height: 22px;
-      padding: 0;
-      border: 0;
-      background: transparent;
-      color: #7af0ff;
-      font: 700 18px/1 ui-sans-serif, system-ui, sans-serif;
-      cursor: pointer;
-    }
-    .list {
-      max-height: 16em;
-      overflow-y: auto;
-      overscroll-behavior: contain;
-    }
-    .list::-webkit-scrollbar {
-      width: 8px;
-    }
-    .list::-webkit-scrollbar-thumb {
-      background: rgba(122, 240, 255, 0.45);
-    }
-    .row {
-      padding: 8px 0;
-      border-top: 1px solid rgba(122, 240, 255, 0.14);
-    }
-    .row:first-child {
-      border-top: 0;
-      padding-top: 0;
-    }
-    .head {
-      display: flex;
-      align-items: flex-start;
-      gap: 8px;
-    }
-    .ask {
-      flex: 1;
-      margin: 0;
-      padding: 0;
-      border: 0;
-      background: transparent;
-      color: #e8fbff;
-      font: 500 14px/1.4 "Avenir Next", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
-      text-align: left;
-      cursor: pointer;
-    }
-    .ask:hover {
-      color: #7af0ff;
-    }
-    .x {
-      flex: 0 0 22px;
-      width: 22px;
-      height: 22px;
-      padding: 0;
-      border: 0;
-      background: transparent;
-      color: #7af0ff;
-      font: 700 16px/1 ui-sans-serif, system-ui, sans-serif;
-      cursor: pointer;
-    }
-    .answer {
-      margin: 6px 0 0;
-      max-height: 6.4em;
-      overflow-y: auto;
-      padding: 8px;
-      border: 1px solid rgba(122, 240, 255, 0.2);
-      background: rgba(5, 12, 18, 0.45);
-      color: #cfeaf0;
-      font-size: 13px;
-      line-height: 1.4;
-      white-space: pre-wrap;
-    }
-    .answer.error {
-      color: #f07178;
-      border-color: rgba(240, 113, 120, 0.4);
-    }
-  `
+  css.textContent = plaqueCardCss()
   shadow.append(css, card)
   const titleEl = shadow.querySelector('.title') as HTMLElement
   const close = shadow.querySelector('.close') as HTMLButtonElement
   const handle = shadow.querySelector('.handle') as HTMLElement
+  const grip = shadow.querySelector('.grip') as HTMLElement
   const listEl = shadow.querySelector('.list') as HTMLElement
   titleEl.textContent = options.title
   close.setAttribute('aria-label', chrome.i18n.getMessage('overlayQuestionsClose') || 'Hide all questions')
 
-  let dragging = false
-  let offsetX = 0
-  let offsetY = 0
   close.addEventListener('pointerdown', (event) => event.stopPropagation())
   close.addEventListener('click', (event) => {
     event.stopPropagation()
     options.onCloseAll()
   })
-  handle.addEventListener('pointerdown', (event) => {
-    if (event.target === close || close.contains(event.target as Node)) {
-      return
-    }
-    dragging = true
-    const rect = host.getBoundingClientRect()
-    offsetX = event.clientX - rect.left
-    offsetY = event.clientY - rect.top
-    host.style.setProperty('left', `${rect.left}px`, 'important')
-    host.style.setProperty('top', `${rect.top}px`, 'important')
-    host.style.setProperty('right', 'auto', 'important')
-    host.style.setProperty('bottom', 'auto', 'important')
-    host.style.setProperty('transform', 'none', 'important')
-    handle.setPointerCapture(event.pointerId)
-  })
-  handle.addEventListener('pointermove', (event) => {
-    if (!dragging) {
-      return
-    }
-    host.style.setProperty('left', `${Math.max(8, event.clientX - offsetX)}px`, 'important')
-    host.style.setProperty('top', `${Math.max(8, event.clientY - offsetY)}px`, 'important')
-  })
-  handle.addEventListener('pointerup', () => {
-    dragging = false
-  })
-  handle.addEventListener('pointercancel', () => {
-    dragging = false
-  })
+  const unbindFrame = bindPlaqueFrame(host, handle, grip, [close])
 
   function paint(): void {
     const loadingLabel = chrome.i18n.getMessage('questionAnswerLoading') || '…'
@@ -850,6 +1016,9 @@ function createQuestionsPlaque(options: {
     setOpen(open) {
       host.setAttribute('data-open', open ? '1' : '0')
       host.style.setProperty('display', open ? 'block' : 'none', 'important')
+      if (open) {
+        requestAnimationFrame(() => clampPlaque(host))
+      }
     },
     upsert(id, question) {
       const existing = items.find((item) => item.id === id)
@@ -891,6 +1060,7 @@ function createQuestionsPlaque(options: {
       return items.map((item) => item.id)
     },
     unmount() {
+      unbindFrame()
       host.remove()
     },
   }
