@@ -2,7 +2,7 @@ type HudHandle = { teardown: () => void; enable: () => void }
 type PlaqueKind = 'original' | 'translation'
 
 const overlayWindow = window as Window & { __jarvisHud?: HudHandle; __jarvisHudRev?: number }
-const HUD_REV = 18
+const HUD_REV = 22
 const STYLE_ID = 'jarvis-hud-style'
 const HOST_IDS = {
   original: 'jarvis-plaque-original',
@@ -36,9 +36,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
 })
 
 if (window === window.top) {
-  overlayWindow.__jarvisHud?.teardown()
-  overlayWindow.__jarvisHud = startOverlay()
-  overlayWindow.__jarvisHudRev = HUD_REV
+  if (overlayWindow.__jarvisHudRev !== HUD_REV || !overlayWindow.__jarvisHud) {
+    overlayWindow.__jarvisHud?.teardown()
+    overlayWindow.__jarvisHud = startOverlay()
+    overlayWindow.__jarvisHudRev = HUD_REV
+  }
 }
 
 function startOverlay(): HudHandle {
@@ -98,7 +100,7 @@ function startOverlay(): HudHandle {
       right: auto !important;
       bottom: auto !important;
       width: min(520px, calc(100vw - var(--jarvis-right, 16px) - 32px)) !important;
-      height: 168px !important;
+      height: 200px !important;
       transform: translateX(-50%) !important;
     }
     #${HOST_IDS.original}[data-open="1"],
@@ -227,7 +229,11 @@ function startOverlay(): HudHandle {
     target?: 'original' | 'translation'
     id?: string
     question?: string
+    questionEn?: string
+    questionRu?: string
     answer?: string
+    answerEn?: string
+    answerRu?: string
     error?: string
   }): void {
     if (message.type === 'ENABLE_OVERLAY') {
@@ -266,7 +272,11 @@ function startOverlay(): HudHandle {
     }
     if (message.type === 'SHOW_OVERLAY_QUESTION' && message.id && message.question) {
       closedQuestions = false
-      questionsPlaque.upsert(message.id, message.question)
+      questionsPlaque.upsert(message.id, {
+        question: message.question,
+        questionEn: message.questionEn,
+        questionRu: message.questionRu,
+      })
       render()
       return
     }
@@ -276,7 +286,12 @@ function startOverlay(): HudHandle {
       return
     }
     if (message.type === 'SHOW_OVERLAY_ANSWER' && message.id) {
-      questionsPlaque.setAnswer(message.id, message.answer, message.error)
+      questionsPlaque.setAnswer(message.id, {
+        answer: message.answer,
+        answerEn: message.answerEn,
+        answerRu: message.answerRu,
+        error: message.error,
+      })
       render()
       return
     }
@@ -299,7 +314,17 @@ function startOverlay(): HudHandle {
     }
   }
 
-  chrome.runtime.onMessage.addListener(onMessage)
+  const onRuntimeMessage = (
+    message: Parameters<typeof onMessage>[0],
+    _sender: chrome.runtime.MessageSender,
+    sendResponse: (response: { ok: true }) => void,
+  ) => {
+    onMessage(message)
+    sendResponse({ ok: true })
+    return false
+  }
+
+  chrome.runtime.onMessage.addListener(onRuntimeMessage)
   document.addEventListener('fullscreenchange', mount)
   meter = window.setInterval(mount, 800)
 
@@ -361,7 +386,7 @@ function startOverlay(): HudHandle {
       render()
     },
     teardown() {
-      chrome.runtime.onMessage.removeListener(onMessage)
+      chrome.runtime.onMessage.removeListener(onRuntimeMessage)
       document.removeEventListener('fullscreenchange', mount)
       window.clearInterval(meter)
       originalPlaque.remove()
@@ -634,7 +659,8 @@ function plaqueCardCss(): string {
     }
     .clear,
     .close,
-    .x {
+    .x,
+    .lang {
       width: 22px;
       height: 22px;
       padding: 0;
@@ -642,6 +668,15 @@ function plaqueCardCss(): string {
       background: transparent;
       color: #4a63b5;
       cursor: pointer;
+    }
+    .lang {
+      width: auto;
+      min-width: 44px;
+      padding: 0 6px;
+      border: 1px solid rgba(74, 99, 181, 0.4);
+      border-radius: 6px;
+      font: 600 9px/1 "Avenir Next", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+      letter-spacing: 0.08em;
     }
     .close,
     .x {
@@ -746,6 +781,29 @@ function plaqueCardCss(): string {
     }
     .ask:hover {
       color: #4a63b5;
+    }
+    .ask-alt {
+      margin: 4px 0 0;
+      padding-right: 30px;
+      color: #5d6780;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .pair {
+      margin: 0;
+    }
+    .pair + .pair {
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(74, 99, 181, 0.12);
+    }
+    .pair span {
+      display: inline-block;
+      margin-right: 6px;
+      color: #4a63b5;
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
     }
     .answer {
       margin: 6px 0 0;
@@ -866,7 +924,6 @@ function createPlaque(options: {
     },
     append(text) {
       captionEl.querySelector('.hint')?.remove()
-      const stick = isNearBottom(captionEl)
       const line = document.createElement('p')
       line.className = 'caption-line'
       const inner = document.createElement('span')
@@ -876,9 +933,7 @@ function createPlaque(options: {
       requestAnimationFrame(() => {
         line.classList.add('in')
       })
-      if (stick) {
-        followBottom(captionEl)
-      }
+      followBottom(captionEl)
     },
     showHint(text) {
       const hint = document.createElement('p')
@@ -905,22 +960,31 @@ function createQuestionsPlaque(options: {
 }): {
   mount: (root: Element) => void
   setOpen: (open: boolean) => void
-  upsert: (id: string, question: string) => void
+  upsert: (id: string, payload: { question: string; questionEn?: string; questionRu?: string }) => void
   drop: (id: string) => void
-  setAnswer: (id: string, answer?: string, error?: string) => void
+  setAnswer: (
+    id: string,
+    payload: { answer?: string; answerEn?: string; answerRu?: string; error?: string },
+  ) => void
   clear: () => void
   ids: () => string[]
   unmount: () => void
 } {
+  type QuestionLang = 'both' | 'en' | 'ru'
   type Item = {
     id: string
     question: string
+    questionEn: string
+    questionRu: string
     answer: string
+    answerEn: string
+    answerRu: string
     error: string
     loading: boolean
     open: boolean
   }
   const items: Item[] = []
+  let questionLang: QuestionLang = 'both'
   const host = document.createElement('div')
   host.id = options.id
   host.setAttribute('data-jarvis-hud', String(HUD_REV))
@@ -932,7 +996,10 @@ function createQuestionsPlaque(options: {
   card.innerHTML = `
     <div class="handle">
       <span class="title"></span>
-      <button class="close" type="button">×</button>
+      <div class="actions">
+        <button class="lang" type="button">EN+RU</button>
+        <button class="close" type="button">×</button>
+      </div>
     </div>
     <div class="list"></div>
     <div class="grip" aria-hidden="true"></div>
@@ -942,18 +1009,82 @@ function createQuestionsPlaque(options: {
   shadow.append(css, card)
   const titleEl = shadow.querySelector('.title') as HTMLElement
   const close = shadow.querySelector('.close') as HTMLButtonElement
+  const langBtn = shadow.querySelector('.lang') as HTMLButtonElement
   const handle = shadow.querySelector('.handle') as HTMLElement
   const grip = shadow.querySelector('.grip') as HTMLElement
   const listEl = shadow.querySelector('.list') as HTMLElement
   titleEl.textContent = options.title
   close.setAttribute('aria-label', chrome.i18n.getMessage('overlayQuestionsClose') || 'Hide all questions')
+  langBtn.setAttribute('aria-label', chrome.i18n.getMessage('overlayQuestionLang') || 'Question language')
 
   close.addEventListener('pointerdown', (event) => event.stopPropagation())
   close.addEventListener('click', (event) => {
     event.stopPropagation()
     options.onCloseAll()
   })
-  const unbindFrame = bindPlaqueFrame(host, handle, grip, [close])
+  langBtn.addEventListener('pointerdown', (event) => event.stopPropagation())
+  langBtn.addEventListener('click', (event) => {
+    event.stopPropagation()
+    questionLang = questionLang === 'both' ? 'en' : questionLang === 'en' ? 'ru' : 'both'
+    paintLang()
+    paint()
+    void chrome.storage.local.set({ questionLang })
+  })
+  const unbindFrame = bindPlaqueFrame(host, handle, grip, [close, langBtn])
+
+  void chrome.storage.local.get({ questionLang: 'both' }).then((stored) => {
+    if (stored.questionLang === 'en' || stored.questionLang === 'ru' || stored.questionLang === 'both') {
+      questionLang = stored.questionLang
+      paintLang()
+      paint()
+    }
+  })
+
+  function paintLang(): void {
+    langBtn.textContent =
+      questionLang === 'en'
+        ? chrome.i18n.getMessage('questionLangEn') || 'EN'
+        : questionLang === 'ru'
+          ? chrome.i18n.getMessage('questionLangRu') || 'RU'
+          : chrome.i18n.getMessage('questionLangBoth') || 'EN+RU'
+  }
+
+  function questionLines(item: Item): { main: string; alt: string } {
+    const en = item.questionEn || item.question
+    const ru = item.questionRu || item.question
+    if (questionLang === 'en') {
+      return { main: en, alt: '' }
+    }
+    if (questionLang === 'ru') {
+      return { main: ru, alt: '' }
+    }
+    return { main: en, alt: ru !== en ? ru : '' }
+  }
+
+  function answerLines(item: Item): Array<{ label: string; text: string }> {
+    if (item.error || item.loading) {
+      return []
+    }
+    const en = item.answerEn.trim()
+    const ru = item.answerRu.trim()
+    if (questionLang === 'en') {
+      return en ? [{ label: '', text: en }] : ru ? [{ label: '', text: ru }] : []
+    }
+    if (questionLang === 'ru') {
+      return ru ? [{ label: '', text: ru }] : en ? [{ label: '', text: en }] : []
+    }
+    const lines: Array<{ label: string; text: string }> = []
+    if (en) {
+      lines.push({ label: 'EN', text: en })
+    }
+    if (ru && ru !== en) {
+      lines.push({ label: 'RU', text: ru })
+    }
+    if (lines.length === 0 && item.answer.trim()) {
+      lines.push({ label: '', text: item.answer.trim() })
+    }
+    return lines
+  }
 
   function paint(): void {
     const loadingLabel = chrome.i18n.getMessage('questionAnswerLoading') || '…'
@@ -967,15 +1098,21 @@ function createQuestionsPlaque(options: {
       const ask = document.createElement('button')
       ask.className = 'ask'
       ask.type = 'button'
-      ask.textContent = item.question
+      const lines = questionLines(item)
+      ask.textContent = lines.main
       ask.addEventListener('click', () => {
-        if (item.open && !item.loading && (item.answer || item.error)) {
+        if (item.open && !item.loading && (item.answer || item.answerEn || item.answerRu || item.error)) {
           item.open = false
           paint()
           return
         }
         item.open = true
-        if (!item.answer && !item.error && !item.loading) {
+        if (item.loading) {
+          options.onAsk(item.id)
+          paint()
+          return
+        }
+        if (!item.answer && !item.answerEn && !item.answerRu && !item.error) {
           item.loading = true
           options.onAsk(item.id)
         }
@@ -997,15 +1134,41 @@ function createQuestionsPlaque(options: {
       })
       head.append(ask, x)
       row.append(head)
+      if (lines.alt) {
+        const alt = document.createElement('div')
+        alt.className = 'ask-alt'
+        alt.textContent = lines.alt
+        row.append(alt)
+      }
       if (item.open) {
         const answer = document.createElement('div')
         answer.className = item.error ? 'answer error' : 'answer'
-        answer.textContent = item.loading ? loadingLabel : item.error || item.answer
+        if (item.loading) {
+          answer.textContent = loadingLabel
+        } else if (item.error) {
+          answer.textContent = item.error
+        } else {
+          const pairs = answerLines(item)
+          if (pairs.length === 1 && !pairs[0].label) {
+            answer.textContent = pairs[0].text
+          } else {
+            for (const pair of pairs) {
+              const line = document.createElement('p')
+              line.className = 'pair'
+              const label = document.createElement('span')
+              label.textContent = pair.label
+              line.append(label, document.createTextNode(pair.text))
+              answer.append(line)
+            }
+          }
+        }
         row.append(answer)
       }
       listEl.append(row)
     }
   }
+
+  paintLang()
 
   return {
     mount(root) {
@@ -1020,14 +1183,27 @@ function createQuestionsPlaque(options: {
         requestAnimationFrame(() => clampPlaque(host))
       }
     },
-    upsert(id, question) {
+    upsert(id, payload) {
       const existing = items.find((item) => item.id === id)
       if (existing) {
-        existing.question = question
+        existing.question = payload.question
+        existing.questionEn = payload.questionEn ?? existing.questionEn
+        existing.questionRu = payload.questionRu ?? existing.questionRu
         paint()
         return
       }
-      items.push({ id, question, answer: '', error: '', loading: false, open: false })
+      items.push({
+        id,
+        question: payload.question,
+        questionEn: payload.questionEn ?? '',
+        questionRu: payload.questionRu ?? '',
+        answer: '',
+        answerEn: '',
+        answerRu: '',
+        error: '',
+        loading: false,
+        open: false,
+      })
       while (items.length > 8) {
         items.shift()
       }
@@ -1041,15 +1217,23 @@ function createQuestionsPlaque(options: {
       items.splice(index, 1)
       paint()
     },
-    setAnswer(id, answer, error) {
+    setAnswer(id, payload) {
       const item = items.find((entry) => entry.id === id)
       if (!item) {
         return
       }
       item.loading = false
       item.open = true
-      item.answer = answer?.trim() ?? ''
-      item.error = error?.trim() ?? ''
+      item.error = payload.error?.trim() ?? ''
+      if (payload.answer !== undefined) {
+        item.answer = payload.answer.trim()
+      }
+      if (payload.answerEn !== undefined) {
+        item.answerEn = payload.answerEn.trim()
+      }
+      if (payload.answerRu !== undefined) {
+        item.answerRu = payload.answerRu.trim()
+      }
       paint()
     },
     clear() {

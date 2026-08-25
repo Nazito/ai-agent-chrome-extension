@@ -1,5 +1,11 @@
-const CHUNK_SECONDS = 3
-const SILENCE_RMS = 0.007
+const MIN_CHUNK_SECONDS = 1.6
+const MAX_CHUNK_SECONDS = 3
+const SILENCE_FLUSH_SECONDS = 0.5
+const PRE_ROLL_SECONDS = 0.35
+const TAIL_SECONDS = 0.8
+const MIN_SPEECH_SECONDS = 0.7
+const SPEECH_RMS = 0.008
+const SILENCE_RMS = 0.006
 const METER_MS = 80
 const PROCESSOR_BUFFER = 4096
 
@@ -19,6 +25,11 @@ export class TabAudioSession {
   private wanted = false
   private pending: Float32Array[] = []
   private pendingSamples = 0
+  private preRoll: Float32Array[] = []
+  private preRollSamples = 0
+  private silenceSamples = 0
+  private speechSamples = 0
+  private inSpeech = false
 
   constructor(private readonly handlers: TabAudioHandlers) {
     this.preview = document.createElement('video')
@@ -37,8 +48,7 @@ export class TabAudioSession {
     await this.stop()
     this.wanted = true
     this.captureStream = stream
-    this.pending = []
-    this.pendingSamples = 0
+    this.resetBuffers()
 
     const audioTracks = stream.getAudioTracks()
     if (audioTracks.length === 0) {
@@ -96,8 +106,7 @@ export class TabAudioSession {
     this.processor = null
     this.captureStream?.getTracks().forEach((track) => track.stop())
     this.captureStream = null
-    this.pending = []
-    this.pendingSamples = 0
+    this.resetBuffers()
     this.preview.pause()
     this.preview.srcObject = null
     await this.audioContext?.close().catch(() => undefined)
@@ -106,22 +115,97 @@ export class TabAudioSession {
     this.handlers.onLevel(0, new Array(12).fill(0))
   }
 
+  private resetBuffers(): void {
+    this.pending = []
+    this.pendingSamples = 0
+    this.preRoll = []
+    this.preRollSamples = 0
+    this.silenceSamples = 0
+    this.speechSamples = 0
+    this.inSpeech = false
+  }
+
   private collectPcm(input: Float32Array): void {
-    this.pending.push(new Float32Array(input))
-    this.pendingSamples += input.length
+    const frame = new Float32Array(input)
     const sampleRate = this.audioContext?.sampleRate ?? 48000
-    if (this.pendingSamples < sampleRate * CHUNK_SECONDS) {
+    const rms = pcmRms(frame)
+
+    if (!this.inSpeech) {
+      this.pushPreRoll(frame, sampleRate)
+      if (rms < SPEECH_RMS) {
+        return
+      }
+      this.inSpeech = true
+      this.pending = this.preRoll
+      this.pendingSamples = this.preRollSamples
+      this.preRoll = []
+      this.preRollSamples = 0
+      this.silenceSamples = 0
+      this.speechSamples = frame.length
       return
     }
 
-    const pcm = mergePcm(this.pending, this.pendingSamples)
-    this.pending = []
-    this.pendingSamples = 0
-    const rms = pcmRms(pcm)
+    this.pending.push(frame)
+    this.pendingSamples += frame.length
     if (rms < SILENCE_RMS) {
+      this.silenceSamples += frame.length
+    } else {
+      this.silenceSamples = 0
+      if (rms >= SPEECH_RMS) {
+        this.speechSamples += frame.length
+      }
+    }
+
+    const duration = this.pendingSamples / sampleRate
+    const silence = this.silenceSamples / sampleRate
+    if (duration < MIN_CHUNK_SECONDS) {
+      if (silence >= SILENCE_FLUSH_SECONDS) {
+        this.pending = []
+        this.pendingSamples = 0
+        this.silenceSamples = 0
+        this.speechSamples = 0
+        this.inSpeech = false
+      }
       return
     }
-    this.handlers.onChunk(encodeWav(pcm, sampleRate), rms)
+    if (duration < MAX_CHUNK_SECONDS && silence < SILENCE_FLUSH_SECONDS) {
+      return
+    }
+    this.flushChunk(sampleRate, silence < SILENCE_FLUSH_SECONDS)
+  }
+
+  private pushPreRoll(frame: Float32Array, sampleRate: number): void {
+    this.preRoll.push(frame)
+    this.preRollSamples += frame.length
+    const keep = Math.floor(sampleRate * PRE_ROLL_SECONDS)
+    if (this.preRollSamples > keep) {
+      const trimmed = takeTail(this.preRoll, this.preRollSamples, keep)
+      this.preRoll = trimmed.parts
+      this.preRollSamples = trimmed.total
+    }
+  }
+
+  private flushChunk(sampleRate: number, keepTail: boolean): void {
+    const pcm = mergePcm(this.pending, this.pendingSamples)
+    const rms = pcmRms(pcm)
+    const enoughSpeech = this.speechSamples >= sampleRate * MIN_SPEECH_SECONDS && rms >= SPEECH_RMS
+    if (enoughSpeech) {
+      this.handlers.onChunk(encodeWav(pcm, sampleRate), rms)
+    }
+    if (keepTail && enoughSpeech) {
+      const tail = takeTail(this.pending, this.pendingSamples, Math.floor(sampleRate * TAIL_SECONDS))
+      this.pending = tail.parts
+      this.pendingSamples = tail.total
+      this.silenceSamples = 0
+      this.speechSamples = 0
+      this.inSpeech = this.pendingSamples > 0
+      return
+    }
+    this.pending = []
+    this.pendingSamples = 0
+    this.silenceSamples = 0
+    this.speechSamples = 0
+    this.inSpeech = false
   }
 
   private meterLoop(): void {
@@ -199,6 +283,17 @@ function mergePcm(parts: Float32Array[], total: number): Float32Array {
     offset += part.length
   }
   return pcm
+}
+
+function takeTail(parts: Float32Array[], total: number, keep: number): { parts: Float32Array[]; total: number } {
+  if (keep <= 0) {
+    return { parts: [], total: 0 }
+  }
+  if (keep >= total) {
+    return { parts, total }
+  }
+  const pcm = mergePcm(parts, total)
+  return { parts: [new Float32Array(pcm.subarray(pcm.length - keep))], total: keep }
 }
 
 function pcmRms(pcm: Float32Array): number {
