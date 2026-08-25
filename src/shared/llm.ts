@@ -56,16 +56,26 @@ export async function translateText(
 }
 
 const EXTRACT_QUESTIONS_PROMPT = `You extract questions from live meeting speech.
+The transcript may be split across chunks. Join a question that was cut mid-sentence into one complete question.
 Return JSON only: {"questions":["..."]}
-Include only questions that expect an answer from listeners or the room.
+Include only complete questions that expect an answer from listeners or the room.
+A question is complete if it has a clear ask and does not end on a dangling word like "the", "to", "about", "and".
 Skip rhetorical questions, check-ins ("can you hear me?", "слышно?"), tag questions ("right?", "да?"), and unfinished fragments.
 Keep the speaker's original wording, lightly cleaned.
 If none, return {"questions":[]}.`
 
-const ANSWER_RU =
-  'Ты помогаешь участнику созвона ответить на вопрос спикера. Короткий ответ на русском, 2–6 предложений, как реплика вслух. Опирайся на недавнюю расшифровку. Не выдумывай факты встречи, которых нет в контексте. Если из контекста нельзя ответить — дай краткий общий ответ и скажи, чего не хватает. Верни только текст ответа.'
-const ANSWER_EN =
-  'You help a meeting participant answer a question the speaker just asked. Write a short spoken-style answer in English, 2–6 sentences. Use the recent transcript as context. Do not invent meeting facts that are not in the context. If the transcript is not enough, give a brief general answer and say what is missing. Return only the answer.'
+const ANSWER_PROMPT = `You help a meeting participant answer a question just asked.
+Return JSON only: {"en":"...","ru":"..."}
+Each value is one short spoken sentence, 6–14 words.
+No greeting, no second sentence, no lists, no extra context.
+Use the transcript. Do not invent meeting facts.
+If the transcript is not enough, one short sentence saying that.`
+
+export function looksRussian(text: string): boolean {
+  const cyrillic = (text.match(/[а-яё]/gi) ?? []).length
+  const latin = (text.match(/[a-z]/gi) ?? []).length
+  return cyrillic > latin
+}
 
 export async function extractQuestions(
   provider: ProviderId,
@@ -84,13 +94,12 @@ export async function answerQuestion(
   apiKey: string,
   question: string,
   context: string,
-  language: 'ru' | 'en',
-): Promise<string> {
-  const prompt = language === 'ru' ? ANSWER_RU : ANSWER_EN
+): Promise<{ en: string; ru: string }> {
   const user = context.trim()
     ? `Question:\n${question}\n\nRecent transcript:\n${context}`
     : `Question:\n${question}`
-  return chatText(provider, apiKey, user, prompt)
+  const raw = await chatText(provider, apiKey, user, ANSWER_PROMPT)
+  return parseAnswerPair(raw)
 }
 
 function chatText(provider: ProviderId, apiKey: string, text: string, prompt: string): Promise<string> {
@@ -124,10 +133,37 @@ function parseQuestionList(raw: string): string[] {
   return list
     .map((item) => (typeof item === 'string' ? item : String((item as { question?: string }).question ?? '')))
     .map((item) => item.replace(/\s+/g, ' ').trim())
-    .filter((item) => item.length > 8)
+    .filter((item) => item.length > 12 && !isCutQuestion(item))
 }
 
-function tryParseJson(text: string | null): { questions?: unknown } | unknown[] | null {
+export function isCutQuestion(text: string): boolean {
+  const body = text.replace(/[?？.!]+\s*$/u, '').trim()
+  if (!body) {
+    return true
+  }
+  return /\b(the|a|an|to|for|of|and|or|in|on|at|with|by|from|about|as|if|that|my|your|our|и|на|по|для|про|чтобы|или)\s*$/iu.test(
+    body,
+  )
+}
+
+function parseAnswerPair(raw: string): { en: string; ru: string } {
+  const trimmed = raw.trim()
+  const json = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/u, '')
+  const parsed = tryParseJson(json) ?? tryParseJson(extractJsonObject(json))
+  if (parsed && !Array.isArray(parsed)) {
+    const en = typeof parsed.en === 'string' ? parsed.en.replace(/\s+/g, ' ').trim() : ''
+    const ru = typeof parsed.ru === 'string' ? parsed.ru.replace(/\s+/g, ' ').trim() : ''
+    if (en || ru) {
+      return { en, ru }
+    }
+  }
+  if (looksRussian(trimmed)) {
+    return { en: '', ru: trimmed.replace(/\s+/g, ' ') }
+  }
+  return { en: trimmed.replace(/\s+/g, ' '), ru: '' }
+}
+
+function tryParseJson(text: string | null): { questions?: unknown; en?: unknown; ru?: unknown } | unknown[] | null {
   if (!text) {
     return null
   }

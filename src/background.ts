@@ -6,6 +6,20 @@ let overlayTabIds = new Set<number>()
 let overlayEnabled = false
 let translateDirection: TranslateDirection = 'en-ru'
 const overlayStatusByTab = new Map<number, { original: boolean; translation: boolean }>()
+const OVERLAY_SEND_MS = 700
+const OVERLAY_INJECT_MS = 1200
+const overlayBoot = Promise.race([
+  restoreOverlaySession(),
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, 400)
+  }),
+])
+
+type OverlaySession = {
+  enabled: boolean
+  tabIds: number[]
+  direction: TranslateDirection
+}
 
 void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
 
@@ -18,20 +32,25 @@ chrome.action.onClicked.addListener((tab) => {
 })
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status !== 'complete' || !overlayEnabled || !tab.id || !isHttpTab(tab)) {
+  if (changeInfo.status !== 'complete' || !tab.id || !isHttpTab(tab)) {
     return
   }
-  if (overlayTabIds.has(tabId) || tab.audible || tab.active) {
-    overlayTabIds.add(tabId)
-    void injectOverlay(tabId)
-      .then(() => chrome.tabs.sendMessage(tabId, enableOverlayMessage()).catch(() => undefined))
-      .catch(() => undefined)
-  }
+  void overlayBoot.then(() => {
+    if (!overlayEnabled) {
+      return
+    }
+    if (overlayTabIds.has(tabId) || tab.audible || tab.active) {
+      overlayTabIds.add(tabId)
+      persistOverlaySession()
+      void ensureOverlay(tabId)
+    }
+  })
 })
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   overlayTabIds.delete(tabId)
   overlayStatusByTab.delete(tabId)
+  persistOverlaySession()
   void publishPlaqueCount()
 })
 
@@ -59,27 +78,34 @@ chrome.runtime.onMessage.addListener(
     }
 
     if (message.type === MessageType.EnableOverlay) {
-      enableOverlay()
-        .then(() => sendResponse({ ok: true }))
-        .catch((error: unknown) => sendResponse({ ok: false, error: errorMessage(error) }))
-      return true
+      void overlayBoot.then(async () => {
+        if (isTranslateDirection(message.direction)) {
+          translateDirection = message.direction
+        }
+        if (overlayEnabled) {
+          await pingOverlay()
+        } else {
+          await enableOverlay()
+        }
+      })
+      sendResponse({ ok: true })
+      return false
     }
 
     if (message.type === MessageType.DisableOverlay) {
-      disableOverlay()
-        .then(() => sendResponse({ ok: true }))
-        .catch((error: unknown) => sendResponse({ ok: false, error: errorMessage(error) }))
-      return true
+      void overlayBoot.then(() => disableOverlay())
+      sendResponse({ ok: true })
+      return false
     }
 
     if (message.type === MessageType.ShowOverlayCaption) {
-      void broadcastOverlay(message)
+      void overlayBoot.then(() => enqueueOverlay(message))
       sendResponse({ ok: true })
       return false
     }
 
     if (message.type === MessageType.ClearOverlayCaption) {
-      void broadcastOverlay(message)
+      void overlayBoot.then(() => enqueueOverlay(message))
       if (sender.tab) {
         void chrome.runtime.sendMessage(message).catch(() => undefined)
       }
@@ -91,7 +117,8 @@ chrome.runtime.onMessage.addListener(
       if (isTranslateDirection(message.direction)) {
         translateDirection = message.direction
       }
-      openCaptionWindow()
+      overlayBoot
+        .then(() => openCaptionWindow())
         .then(() => sendResponse({ ok: true }))
         .catch((error: unknown) =>
           sendResponse({
@@ -106,14 +133,16 @@ chrome.runtime.onMessage.addListener(
     if (message.type === MessageType.SetTranslateDirection) {
       if (isTranslateDirection(message.direction)) {
         translateDirection = message.direction
-        void broadcastOverlay({ type: MessageType.SetTranslateDirection, direction: translateDirection })
+        persistOverlaySession()
+        void enqueueOverlay({ type: MessageType.SetTranslateDirection, direction: translateDirection })
       }
       sendResponse({ ok: true })
       return false
     }
 
     if (message.type === MessageType.CloseCaptionWindow) {
-      disableOverlay()
+      overlayBoot
+        .then(() => disableOverlay())
         .then(() => sendResponse({ ok: true }))
         .catch((error: unknown) => sendResponse({ ok: false, error: errorMessage(error) }))
       return true
@@ -143,16 +172,16 @@ chrome.runtime.onMessage.addListener(
       message.type === MessageType.ShowOverlayAnswer ||
       message.type === MessageType.ClearOverlayQuestions
     ) {
-      void broadcastOverlay(message)
+      void overlayBoot.then(() => enqueueOverlay(message))
       sendResponse({ ok: true })
       return false
     }
 
     if (message.type === MessageType.DismissOverlayQuestion) {
-      void broadcastOverlay(message)
       if (sender.tab) {
         void chrome.runtime.sendMessage(message).catch(() => undefined)
       }
+      void overlayBoot.then(() => enqueueOverlay(message))
       sendResponse({ ok: true })
       return false
     }
@@ -239,9 +268,10 @@ async function handleActionClick(tab: chrome.tabs.Tab): Promise<void> {
     if (isHttpUrl(url)) {
       overlayEnabled = true
       overlayTabIds.add(tab.id)
+      persistOverlaySession()
       try {
         await injectOverlay(tab.id)
-        await chrome.tabs.sendMessage(tab.id, enableOverlayMessage()).catch(() => undefined)
+        await chrome.tabs.sendMessage(tab.id, enableOverlayMessage(), { frameId: 0 }).catch(() => undefined)
       } catch {
         // Site access may still block this tab.
       }
@@ -249,46 +279,161 @@ async function handleActionClick(tab: chrome.tabs.Tab): Promise<void> {
   }
 }
 
+async function restoreOverlaySession(): Promise<void> {
+  try {
+    const stored = (await chrome.storage.session.get('overlaySession')) as {
+      overlaySession?: OverlaySession
+    }
+    const session = stored.overlaySession
+    if (!session?.enabled) {
+      return
+    }
+    overlayEnabled = true
+    overlayTabIds = new Set(session.tabIds.filter((id) => Number.isInteger(id) && id > 0))
+    if (isTranslateDirection(session.direction)) {
+      translateDirection = session.direction
+    }
+  } catch {
+    // session storage may be unavailable
+  }
+}
+
+function persistOverlaySession(): void {
+  void chrome.storage.session
+    .set({
+      overlaySession: {
+        enabled: overlayEnabled,
+        tabIds: [...overlayTabIds],
+        direction: translateDirection,
+      } satisfies OverlaySession,
+    })
+    .catch(() => undefined)
+}
+
 async function enableOverlay(): Promise<void> {
   overlayEnabled = true
   overlayTabIds = new Set(await overlayTargets())
+  persistOverlaySession()
   await Promise.all([...overlayTabIds].map((tabId) => injectOverlay(tabId).catch(() => undefined)))
-  await broadcastOverlay(enableOverlayMessage())
+  await enqueueOverlay(enableOverlayMessage())
+}
+
+async function pingOverlay(): Promise<void> {
+  overlayEnabled = true
+  persistOverlaySession()
+  await enqueueOverlay(enableOverlayMessage())
 }
 
 async function disableOverlay(): Promise<void> {
   overlayEnabled = false
-  await broadcastOverlay({ type: MessageType.DisableOverlay })
+  persistOverlaySession()
+  await enqueueOverlay({ type: MessageType.DisableOverlay })
   overlayTabIds.clear()
   overlayStatusByTab.clear()
+  persistOverlaySession()
   void publishPlaqueCount()
 }
 
 async function injectOverlay(tabId: number): Promise<void> {
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: ['overlay/index.js'],
-    injectImmediately: true,
+  await withTimeout(
+    chrome.scripting
+      .executeScript({
+        target: { tabId },
+        files: ['overlay/index.js'],
+        injectImmediately: true,
+      })
+      .then(() => undefined),
+    OVERLAY_INJECT_MS,
+  )
+}
+
+async function ensureOverlay(tabId: number): Promise<void> {
+  try {
+    await injectOverlay(tabId)
+    await sendToFrame(tabId, enableOverlayMessage())
+  } catch {
+    // Site access or missing receiver.
+  }
+}
+
+async function sendOverlayToTab(tabId: number, message: ExtensionMessage): Promise<void> {
+  await withTimeout(deliverOverlayToTab(tabId, message), OVERLAY_SEND_MS + OVERLAY_INJECT_MS + OVERLAY_SEND_MS).catch(
+    () => undefined,
+  )
+}
+
+async function deliverOverlayToTab(tabId: number, message: ExtensionMessage): Promise<void> {
+  try {
+    await sendToFrame(tabId, message)
+  } catch {
+    if (!overlayEnabled && message.type !== MessageType.DisableOverlay) {
+      return
+    }
+    await injectOverlay(tabId)
+    if (message.type !== MessageType.EnableOverlay && message.type !== MessageType.DisableOverlay) {
+      await sendToFrame(tabId, enableOverlayMessage()).catch(() => undefined)
+    }
+    await sendToFrame(tabId, message)
+  }
+}
+
+function sendToFrame(tabId: number, message: ExtensionMessage): Promise<unknown> {
+  return withTimeout(chrome.tabs.sendMessage(tabId, message, { frameId: 0 }), OVERLAY_SEND_MS)
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('overlay-timeout')), ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error: unknown) => {
+        clearTimeout(timer)
+        reject(error)
+      },
+    )
   })
 }
 
+let overlayQueue: Promise<void> = Promise.resolve()
+
+function enqueueOverlay(message: ExtensionMessage): Promise<void> {
+  const live =
+    message.type === MessageType.ShowOverlayQuestion ||
+    message.type === MessageType.ShowOverlayAnswer ||
+    message.type === MessageType.DismissOverlayQuestion ||
+    message.type === MessageType.ClearOverlayQuestions
+  if (live) {
+    return overlayBoot.then(() => broadcastOverlay(message)).catch(() => undefined)
+  }
+  overlayQueue = overlayQueue.then(() => broadcastOverlay(message)).catch(() => undefined)
+  return overlayQueue
+}
+
 async function broadcastOverlay(message: ExtensionMessage): Promise<void> {
-  const tabIds = overlayEnabled ? new Set([...(await overlayTargets()), ...overlayTabIds]) : overlayTabIds
-  overlayTabIds = tabIds
-  await Promise.all(
-    [...tabIds].map(async (tabId) => {
-      try {
-        await chrome.tabs.sendMessage(tabId, message)
-      } catch {
-        await injectOverlay(tabId).catch(() => undefined)
-        try {
-          await chrome.tabs.sendMessage(tabId, message)
-        } catch {
-          // Tab cannot receive overlay messages.
-        }
-      }
-    }),
-  )
+  await overlayBoot
+  if (
+    !overlayEnabled &&
+    (message.type === MessageType.ShowOverlayCaption ||
+      message.type === MessageType.ShowOverlayQuestion ||
+      message.type === MessageType.ShowOverlayAnswer)
+  ) {
+    overlayEnabled = true
+    persistOverlaySession()
+  }
+  const tabIds =
+    message.type === MessageType.DisableOverlay
+      ? [...overlayTabIds]
+      : overlayEnabled
+        ? await overlayTargets()
+        : []
+  if (message.type !== MessageType.DisableOverlay && overlayEnabled) {
+    overlayTabIds = new Set(tabIds)
+    persistOverlaySession()
+  }
+  await Promise.all(tabIds.map((tabId) => sendOverlayToTab(tabId, message)))
 }
 
 function isHttpUrl(url: string): boolean {
@@ -301,10 +446,22 @@ function isHttpTab(tab: chrome.tabs.Tab): boolean {
 
 async function overlayTargets(): Promise<number[]> {
   const tabs = await chrome.tabs.query({})
-  const ranked = tabs
+  const ids = new Set<number>()
+  for (const tab of tabs) {
+    if (!tab.id || !isHttpTab(tab)) {
+      continue
+    }
+    if (overlayTabIds.has(tab.id) || tab.audible || tab.active || overlayScore(tab) >= 8) {
+      ids.add(tab.id)
+    }
+  }
+  if (ids.size > 0) {
+    return [...ids]
+  }
+  const fallback = tabs
     .filter((tab) => tab.id && isHttpTab(tab))
-    .sort((left, right) => overlayScore(right) - overlayScore(left))
-  return ranked.map((tab) => tab.id as number)
+    .sort((left, right) => overlayScore(right) - overlayScore(left))[0]?.id
+  return fallback ? [fallback] : []
 }
 
 function overlayScore(tab: chrome.tabs.Tab): number {
@@ -347,6 +504,7 @@ async function openCaptionWindow(): Promise<void> {
   }
 
   overlayEnabled = true
+  persistOverlaySession()
   const errors: string[] = []
   let injected = 0
   let injectedCall = 0
@@ -358,7 +516,7 @@ async function openCaptionWindow(): Promise<void> {
     overlayTabIds.add(tabId)
     try {
       await injectOverlay(tabId)
-      await chrome.tabs.sendMessage(tabId, enableOverlayMessage()).catch(() => undefined)
+      await sendToFrame(tabId, enableOverlayMessage()).catch(() => undefined)
       injected += 1
       if (overlayScore(tab) >= 8) {
         injectedCall += 1
@@ -367,6 +525,7 @@ async function openCaptionWindow(): Promise<void> {
       errors.push(overlayAccessError(tab, error))
     }
   }
+  persistOverlaySession()
   const callTabs = httpTabs.filter((tab) => overlayScore(tab) >= 8)
   if (callTabs.length > 0 && injectedCall === 0) {
     const first = errors[0] ?? chrome.i18n.getMessage('captionsNeedHost')

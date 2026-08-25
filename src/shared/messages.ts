@@ -54,10 +54,17 @@ export type ExtensionMessage =
   | { type: typeof MessageType.OverlayPlaqueCount; count: number }
   | { type: typeof MessageType.RequestPlaqueCount }
   | { type: typeof MessageType.SetTranslateDirection; direction: 'en-ru' | 'ru-en' }
-  | { type: typeof MessageType.ShowOverlayQuestion; id: string; question: string }
+  | { type: typeof MessageType.ShowOverlayQuestion; id: string; question: string; questionEn?: string; questionRu?: string }
   | { type: typeof MessageType.DismissOverlayQuestion; id: string }
   | { type: typeof MessageType.RequestOverlayAnswer; id: string }
-  | { type: typeof MessageType.ShowOverlayAnswer; id: string; answer?: string; error?: string }
+  | {
+      type: typeof MessageType.ShowOverlayAnswer
+      id: string
+      answer?: string
+      answerEn?: string
+      answerRu?: string
+      error?: string
+    }
   | { type: typeof MessageType.ClearOverlayQuestions }
 
 export type CommandResponse = { ok: true } | { ok: false; error?: string; code?: string }

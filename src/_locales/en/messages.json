@@ -248,6 +248,18 @@
   "overlayQuestionsClose": {
     "message": "Hide all questions"
   },
+  "overlayQuestionLang": {
+    "message": "Question language"
+  },
+  "questionLangBoth": {
+    "message": "EN+RU"
+  },
+  "questionLangEn": {
+    "message": "EN"
+  },
+  "questionLangRu": {
+    "message": "RU"
+  },
   "questionAnswerLoading": {
     "message": "Writing an answer…"
   },

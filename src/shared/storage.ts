@@ -3,6 +3,7 @@ export type ProviderId = 'openai' | 'groq' | 'gemini'
 export const PROVIDERS: ProviderId[] = ['openai', 'groq', 'gemini']
 
 export type TranslateDirection = 'en-ru' | 'ru-en'
+export type QuestionLang = 'both' | 'en' | 'ru'
 
 export type LlmSettings = {
   provider: ProviderId
@@ -20,6 +21,19 @@ export async function loadTranslateDirection(): Promise<TranslateDirection> {
 
 export async function saveTranslateDirection(direction: TranslateDirection): Promise<void> {
   await chrome.storage.local.set({ translateDirection: direction })
+}
+
+export function isQuestionLang(value: unknown): value is QuestionLang {
+  return value === 'both' || value === 'en' || value === 'ru'
+}
+
+export async function loadQuestionLang(): Promise<QuestionLang> {
+  const stored = await chrome.storage.local.get({ questionLang: 'both' })
+  return isQuestionLang(stored.questionLang) ? stored.questionLang : 'both'
+}
+
+export async function saveQuestionLang(lang: QuestionLang): Promise<void> {
+  await chrome.storage.local.set({ questionLang: lang })
 }
 
 const EMPTY_KEYS: Record<ProviderId, string> = {

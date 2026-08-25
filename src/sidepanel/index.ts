@@ -1,13 +1,24 @@
 import { MicrophoneSession, requestMicrophone } from './mic.js'
-import { answerQuestion, extractQuestions, transcribeAudio, translateText } from '../shared/llm.js'
-import { classifyApiError, NamedError, overlayIssueKey, type ApiFailureKind } from '../shared/errors.js'
+import {
+  answerQuestion,
+  extractQuestions,
+  isCutQuestion,
+  looksRussian,
+  transcribeAudio,
+  translateText,
+} from '../shared/llm.js'
+import {
+  classifyApiError,
+  NamedError,
+  overlayIssueKey,
+  type ApiFailureKind,
+} from '../shared/errors.js'
 import { MessageType } from '../shared/messages.js'
 import {
   loadLlmSettings,
   loadTranslateDirection,
   saveProvider,
   saveProviderKey,
-  uiLanguage,
   type LlmSettings,
   type ProviderId,
   type TranslateDirection,
@@ -19,7 +30,9 @@ const hintEl = document.getElementById('starter-body')!
 const micToggle = document.getElementById('mic-toggle') as HTMLButtonElement
 const tabToggle = document.getElementById('tab-toggle') as HTMLButtonElement
 const captionsToggle = document.getElementById('captions-toggle') as HTMLButtonElement
-const sidebarCaptionsToggle = document.getElementById('sidebar-captions-toggle') as HTMLButtonElement
+const sidebarCaptionsToggle = document.getElementById(
+  'sidebar-captions-toggle',
+) as HTMLButtonElement
 const waveEl = document.getElementById('wave') as HTMLCanvasElement
 const waveCtx = waveEl.getContext('2d')!
 const coreEl = document.getElementById('core-value')!
@@ -48,13 +61,25 @@ let settings: LlmSettings = {
   keys: { openai: '', groq: '', gemini: '' },
 }
 let whisperBusy = false
+let translateBusy = false
 let extractBusy = false
+let extractQueued = false
 let hintLockUntil = 0
+let silentSince = 0
 let liveIssue: { status: string; hint: string } | null = null
-const whisperQueue: Blob[] = []
+const whisperQueue: Array<{ blob: Blob; at: number }> = []
+const translateQueue: string[] = []
 const meetingBuffer: string[] = []
 const dismissedQuestions = new Set<string>()
-const visibleQuestions: Array<{ id: string; text: string; key: string }> = []
+const visibleQuestions: Array<{
+  id: string
+  text: string
+  key: string
+  textEn: string
+  textRu: string
+  answerEn: string
+  answerRu: string
+}> = []
 let questionSeq = 0
 const MEETING_BUFFER_MAX = 15
 const VISIBLE_QUESTIONS_MAX = 8
@@ -188,7 +213,12 @@ providerSelect.addEventListener('change', () => {
 })
 
 chrome.runtime.onMessage.addListener(
-  (message: { type?: string; count?: number; target?: 'original' | 'translation'; id?: string }) => {
+  (message: {
+    type?: string
+    count?: number
+    target?: 'original' | 'translation'
+    id?: string
+  }) => {
     if (message.type === MessageType.OverlayPlaqueCount && typeof message.count === 'number') {
       setOverlayPlaques(message.count)
     }
@@ -205,6 +235,7 @@ chrome.runtime.onMessage.addListener(
 )
 
 window.addEventListener('unload', () => {
+  stopOverlayKeepAlive()
   void mic.stop()
   void tab.stop()
   void sendOverlay({ type: MessageType.DisableOverlay })
@@ -281,6 +312,7 @@ async function startTabListening(
       return
     }
     replayOverlayQuestions()
+    startOverlayKeepAlive()
     setHint(chrome.i18n.getMessage('captionsOpened'), 8000)
   } catch (error) {
     if (tab.active) {
@@ -291,6 +323,8 @@ async function startTabListening(
 
 async function stopTabListening(): Promise<void> {
   clearLiveIssue()
+  dropQueuedWork()
+  stopOverlayKeepAlive()
   resetQuestions()
   await tab.stop()
   setTabUi(false)
@@ -304,9 +338,26 @@ function onTabLevel(level: number, bands: number[]): void {
   }
   paintLevel(level, bands)
   signalEl.textContent = `${Math.round(level * 100)}%`
-  if (!whisperBusy && Date.now() >= hintLockUntil && !liveIssue && !statusEl.classList.contains('error')) {
+  if (level < 0.04) {
+    if (!silentSince) {
+      silentSince = Date.now()
+    }
+    if (Date.now() - silentSince >= 700) {
+      dropStaleAudio()
+    }
+  } else {
+    silentSince = 0
+  }
+  if (
+    !whisperBusy &&
+    Date.now() >= hintLockUntil &&
+    !liveIssue &&
+    !statusEl.classList.contains('error')
+  ) {
     writeHint(
-      chrome.i18n.getMessage(!currentKey() ? 'tabNeedsKey' : level < 0.04 ? 'tabSilent' : 'tabLiveHint'),
+      chrome.i18n.getMessage(
+        !currentKey() ? 'tabNeedsKey' : level < 0.04 ? 'tabSilent' : 'tabLiveHint',
+      ),
     )
   }
 }
@@ -317,11 +368,25 @@ function onTabChunk(blob: Blob, _rms: number): void {
     setHint(chrome.i18n.getMessage('tabNeedsKey'), 8000)
     return
   }
-  whisperQueue.push(blob)
-  if (whisperQueue.length > 4) {
+  silentSince = 0
+  whisperQueue.push({ blob, at: Date.now() })
+  if (whisperQueue.length > 3) {
     whisperQueue.shift()
   }
   void drainWhisperQueue()
+}
+
+function dropStaleAudio(): void {
+  const fresh = Date.now() - 2500
+  if (whisperQueue.length === 0 || whisperQueue.every((item) => item.at >= fresh)) {
+    return
+  }
+  whisperQueue.splice(0, whisperQueue.length, ...whisperQueue.filter((item) => item.at >= fresh))
+}
+
+function dropQueuedWork(): void {
+  whisperQueue.length = 0
+  translateQueue.length = 0
 }
 
 async function drainWhisperQueue(): Promise<void> {
@@ -330,28 +395,87 @@ async function drainWhisperQueue(): Promise<void> {
   }
 
   whisperBusy = true
-  while (whisperQueue.length > 0) {
-    const blob = whisperQueue.shift()
-    if (!blob) {
-      break
-    }
-    try {
-      setHint(chrome.i18n.getMessage(translateDirection === 'en-ru' ? 'tabTranscribingEn' : 'tabTranscribingRu'))
-      const original = await transcribeAudio(settings.provider, currentKey(), blob, translateDirection)
-      if (!original) {
-        setHint(chrome.i18n.getMessage(translateDirection === 'en-ru' ? 'tabWaitingSpeechEn' : 'tabWaitingSpeechRu'))
-        continue
+  try {
+    while (whisperQueue.length > 0) {
+      const item = whisperQueue.shift()
+      if (!item) {
+        break
       }
-      appendCaption(originalEl, original)
-      void sendOverlay({
-        type: MessageType.ShowOverlayCaption,
-        original,
-        translation: '',
-      })
-      void detectQuestions(original)
-      setHint(chrome.i18n.getMessage(translateDirection === 'en-ru' ? 'tabTranslatingRu' : 'tabTranslatingEn'))
       try {
-        const translated = await translateText(settings.provider, currentKey(), original, translateDirection)
+        setHint(
+          chrome.i18n.getMessage(
+            translateDirection === 'en-ru' ? 'tabTranscribingEn' : 'tabTranscribingRu',
+          ),
+        )
+        const original = await transcribeAudio(
+          settings.provider,
+          currentKey(),
+          item.blob,
+          translateDirection,
+        )
+        if (!tab.active) {
+          break
+        }
+        if (!original) {
+          setHint(
+            chrome.i18n.getMessage(
+              translateDirection === 'en-ru' ? 'tabWaitingSpeechEn' : 'tabWaitingSpeechRu',
+            ),
+          )
+          continue
+        }
+        appendCaption(originalEl, original)
+        wakeOverlayIfIdle()
+        void sendOverlay({
+          type: MessageType.ShowOverlayCaption,
+          original,
+          translation: '',
+        })
+        void detectQuestions(original)
+        enqueueTranslation(original)
+      } catch (error) {
+        reportLlmIssue('transcribe', classifyApiError(error), error)
+      }
+    }
+  } finally {
+    whisperBusy = false
+  }
+}
+
+function enqueueTranslation(original: string): void {
+  setHint(
+    chrome.i18n.getMessage(
+      translateDirection === 'en-ru' ? 'tabTranslatingRu' : 'tabTranslatingEn',
+    ),
+  )
+  translateQueue.push(original)
+  if (translateQueue.length > 4) {
+    translateQueue.shift()
+  }
+  void drainTranslateQueue()
+}
+
+async function drainTranslateQueue(): Promise<void> {
+  if (translateBusy) {
+    return
+  }
+  translateBusy = true
+  try {
+    while (translateQueue.length > 0) {
+      const original = translateQueue.shift()
+      if (!original) {
+        break
+      }
+      try {
+        const translated = await translateText(
+          settings.provider,
+          currentKey(),
+          original,
+          translateDirection,
+        )
+        if (!tab.active) {
+          break
+        }
         if (!translated) {
           reportLlmIssue('translate', 'empty')
           continue
@@ -363,15 +487,16 @@ async function drainWhisperQueue(): Promise<void> {
           translation: translated,
         })
         clearLiveIssue()
-        setHint(chrome.i18n.getMessage('tabLiveHint'))
+        if (!whisperBusy) {
+          setHint(chrome.i18n.getMessage('tabLiveHint'))
+        }
       } catch (error) {
         reportLlmIssue('translate', classifyApiError(error), error)
       }
-    } catch (error) {
-      reportLlmIssue('transcribe', classifyApiError(error), error)
     }
+  } finally {
+    translateBusy = false
   }
-  whisperBusy = false
 }
 
 function grantMicrophoneInPopup(): Promise<void> {
@@ -405,30 +530,69 @@ function sendOverlay(
     | { type: typeof MessageType.ShowOverlayCaption; original: string; translation: string }
     | { type: typeof MessageType.ClearOverlayCaption; target?: 'original' | 'translation' }
     | { type: typeof MessageType.SetTranslateDirection; direction: TranslateDirection }
-    | { type: typeof MessageType.ShowOverlayQuestion; id: string; question: string }
+    | {
+        type: typeof MessageType.ShowOverlayQuestion
+        id: string
+        question: string
+        questionEn?: string
+        questionRu?: string
+      }
     | { type: typeof MessageType.DismissOverlayQuestion; id: string }
-    | { type: typeof MessageType.ShowOverlayAnswer; id: string; answer?: string; error?: string }
+    | { type: typeof MessageType.RequestOverlayAnswer; id: string }
+    | {
+        type: typeof MessageType.ShowOverlayAnswer
+        id: string
+        answer?: string
+        answerEn?: string
+        answerRu?: string
+        error?: string
+      }
     | { type: typeof MessageType.ClearOverlayQuestions },
-): void {
-  void chrome.runtime.sendMessage(message).catch(() => undefined)
+): Promise<void> {
+  return Promise.race([
+    chrome.runtime
+      .sendMessage(message)
+      .then(() => undefined)
+      .catch(() => undefined),
+    new Promise<void>((resolve) => {
+      window.setTimeout(resolve, 800)
+    }),
+  ])
 }
 
 function normalizeQuestion(text: string): string {
-  return text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
 }
 
-function isDuplicateQuestion(key: string): boolean {
-  if (dismissedQuestions.has(key)) {
+function questionsOverlap(left: string, right: string): boolean {
+  if (left === right) {
     return true
   }
-  return visibleQuestions.some((item) => {
-    if (item.key === key) {
+  const shorter = left.length < right.length ? left : right
+  const longer = left.length < right.length ? right : left
+  if (longer.includes(shorter) && shorter.length / longer.length > 0.45) {
+    return true
+  }
+  const leftWords = shorter.split(' ').filter((word) => word.length > 1)
+  const rightWords = longer.split(' ').filter((word) => word.length > 1)
+  if (leftWords.length < 3 || rightWords.length < 3) {
+    return false
+  }
+  const joined = rightWords.join(' ')
+  const hit = leftWords.filter((word) => joined.includes(word)).length
+  return hit / leftWords.length > 0.78
+}
+
+function isDismissedQuestion(key: string): boolean {
+  for (const dismissed of dismissedQuestions) {
+    if (questionsOverlap(dismissed, key)) {
       return true
     }
-    const shorter = item.key.length < key.length ? item.key : key
-    const longer = item.key.length < key.length ? key : item.key
-    return longer.includes(shorter) && shorter.length / longer.length > 0.72
-  })
+  }
+  return false
 }
 
 function resetQuestions(): void {
@@ -440,8 +604,29 @@ function resetQuestions(): void {
 
 function replayOverlayQuestions(): void {
   for (const item of visibleQuestions) {
-    sendOverlay({ type: MessageType.ShowOverlayQuestion, id: item.id, question: item.text })
+    sendQuestion(item)
   }
+}
+
+function sendQuestion(item: (typeof visibleQuestions)[number]): void {
+  void sendOverlay({
+    type: MessageType.ShowOverlayQuestion,
+    id: item.id,
+    question: item.text,
+    questionEn: item.textEn || undefined,
+    questionRu: item.textRu || undefined,
+  })
+}
+
+function sendAnswer(item: (typeof visibleQuestions)[number], error?: string): void {
+  void sendOverlay({
+    type: MessageType.ShowOverlayAnswer,
+    id: item.id,
+    answer: item.answerRu || item.answerEn || undefined,
+    answerEn: item.answerEn || undefined,
+    answerRu: item.answerRu || undefined,
+    error,
+  })
 }
 
 function dismissQuestion(id: string): void {
@@ -462,10 +647,35 @@ function dismissQuestion(id: string): void {
 
 function pushVisibleQuestion(text: string): void {
   const key = normalizeQuestion(text)
-  if (key.length < 8 || isDuplicateQuestion(key)) {
+  if (key.length < 12 || isDismissedQuestion(key)) {
     return
   }
-  const item = { id: `q-${++questionSeq}`, text, key }
+  const existing = visibleQuestions.find((item) => questionsOverlap(item.key, key))
+  if (existing) {
+    if (key.length <= existing.key.length) {
+      return
+    }
+    const russian = looksRussian(text)
+    existing.text = text
+    existing.key = key
+    existing.textEn = russian ? '' : text
+    existing.textRu = russian ? text : ''
+    existing.answerEn = ''
+    existing.answerRu = ''
+    sendQuestion(existing)
+    void fillQuestionTranslation(existing)
+    return
+  }
+  const russian = looksRussian(text)
+  const item = {
+    id: `q-${++questionSeq}`,
+    text,
+    key,
+    textEn: russian ? '' : text,
+    textRu: russian ? text : '',
+    answerEn: '',
+    answerRu: '',
+  }
   visibleQuestions.push(item)
   while (visibleQuestions.length > VISIBLE_QUESTIONS_MAX) {
     const dropped = visibleQuestions.shift()
@@ -473,7 +683,34 @@ function pushVisibleQuestion(text: string): void {
       sendOverlay({ type: MessageType.DismissOverlayQuestion, id: dropped.id })
     }
   }
-  sendOverlay({ type: MessageType.ShowOverlayQuestion, id: item.id, question: item.text })
+  sendQuestion(item)
+  void fillQuestionTranslation(item)
+}
+
+async function fillQuestionTranslation(item: (typeof visibleQuestions)[number]): Promise<void> {
+  if (!currentKey()) {
+    return
+  }
+  try {
+    if (item.textRu && !item.textEn) {
+      item.textEn = await translateText(settings.provider, currentKey(), item.textRu, 'ru-en')
+    } else if (item.textEn && !item.textRu) {
+      item.textRu = await translateText(settings.provider, currentKey(), item.textEn, 'en-ru')
+    }
+    if (!visibleQuestions.some((entry) => entry.id === item.id)) {
+      return
+    }
+    sendQuestion(item)
+  } catch {
+    // Translation of the question is best-effort.
+  }
+}
+
+function localQuestions(text: string): string[] {
+  const matches = text.match(/[^.!?\n]*[?？]/gu) ?? []
+  return matches
+    .map((item) => item.replace(/\s+/g, ' ').trim())
+    .filter((item) => item.length > 12 && !isCutQuestion(item))
 }
 
 async function detectQuestions(original: string): Promise<void> {
@@ -481,19 +718,33 @@ async function detectQuestions(original: string): Promise<void> {
   if (meetingBuffer.length > MEETING_BUFFER_MAX) {
     meetingBuffer.shift()
   }
-  if (extractBusy || !currentKey() || !QUESTION_GATE.test(original)) {
+  for (const question of localQuestions(original)) {
+    pushVisibleQuestion(question)
+  }
+  const windowText = meetingBuffer.slice(-8).join(' ')
+  for (const question of localQuestions(windowText)) {
+    pushVisibleQuestion(question)
+  }
+  if (!currentKey() || !QUESTION_GATE.test(windowText)) {
+    return
+  }
+  if (extractBusy) {
+    extractQueued = true
     return
   }
   extractBusy = true
-  const windowText = meetingBuffer.slice(-3).join('\n')
   try {
-    const found = await extractQuestions(settings.provider, currentKey(), windowText)
-    if (!tab.active) {
-      return
-    }
-    for (const question of found) {
-      pushVisibleQuestion(question)
-    }
+    do {
+      extractQueued = false
+      const snapshot = meetingBuffer.slice(-8).join(' ')
+      const found = await extractQuestions(settings.provider, currentKey(), snapshot)
+      if (!tab.active) {
+        return
+      }
+      for (const question of found) {
+        pushVisibleQuestion(question)
+      }
+    } while (extractQueued && tab.active && currentKey())
   } catch {
     // Detection is best-effort; do not surface as a live STT failure.
   } finally {
@@ -508,7 +759,7 @@ async function answerOverlayQuestion(id: string): Promise<void> {
   }
   persistApiKey()
   if (!currentKey()) {
-    sendOverlay({
+    void sendOverlay({
       type: MessageType.ShowOverlayAnswer,
       id,
       error: chrome.i18n.getMessage('tabNeedsKey'),
@@ -516,28 +767,32 @@ async function answerOverlayQuestion(id: string): Promise<void> {
     return
   }
   try {
-    const answer = await answerQuestion(
+    const pair = await answerQuestion(
       settings.provider,
       currentKey(),
       item.text,
       meetingBuffer.join('\n'),
-      uiLanguage(),
     )
-    if (!answer) {
-      sendOverlay({
-        type: MessageType.ShowOverlayAnswer,
-        id,
-        error: formatAnswerIssue('empty'),
-      })
+    item.answerEn = pair.en
+    item.answerRu = pair.ru
+    if (!item.answerEn && !item.answerRu) {
+      sendAnswer(item, formatAnswerIssue('empty'))
       return
     }
-    sendOverlay({ type: MessageType.ShowOverlayAnswer, id, answer })
+    sendAnswer(item)
+    if (item.answerRu && !item.answerEn) {
+      item.answerEn = await translateText(settings.provider, currentKey(), item.answerRu, 'ru-en')
+    } else if (item.answerEn && !item.answerRu) {
+      item.answerRu = await translateText(settings.provider, currentKey(), item.answerEn, 'en-ru')
+    }
+    if (!visibleQuestions.some((entry) => entry.id === item.id)) {
+      return
+    }
+    if (item.answerEn || item.answerRu) {
+      sendAnswer(item)
+    }
   } catch (error) {
-    sendOverlay({
-      type: MessageType.ShowOverlayAnswer,
-      id,
-      error: formatAnswerIssue(classifyApiError(error), error),
-    })
+    sendAnswer(item, formatAnswerIssue(classifyApiError(error), error))
   }
 }
 
@@ -597,6 +852,9 @@ async function requestHostPermission(): Promise<void> {
 async function enableOnScreenCaptions(): Promise<void> {
   await requestHostPermission()
   await openCaptionWindow()
+  if (tab.active) {
+    startOverlayKeepAlive()
+  }
 }
 
 async function openCaptionWindow(): Promise<void> {
@@ -612,11 +870,43 @@ async function openCaptionWindow(): Promise<void> {
   }
 }
 
+let overlayKeepAlive = 0
+let lastOverlayWakeAt = 0
+
+function wakeOverlayIfIdle(): void {
+  if (Date.now() - lastOverlayWakeAt < 8000) {
+    lastOverlayWakeAt = Date.now()
+    return
+  }
+  lastOverlayWakeAt = Date.now()
+  void sendOverlay({ type: MessageType.EnableOverlay, direction: translateDirection })
+}
+
+function startOverlayKeepAlive(): void {
+  stopOverlayKeepAlive()
+  overlayKeepAlive = window.setInterval(() => {
+    if (!tab.active) {
+      stopOverlayKeepAlive()
+      return
+    }
+    lastOverlayWakeAt = Date.now()
+    void sendOverlay({ type: MessageType.EnableOverlay, direction: translateDirection })
+  }, 8000)
+}
+
+function stopOverlayKeepAlive(): void {
+  window.clearInterval(overlayKeepAlive)
+  overlayKeepAlive = 0
+}
+
 function syncLayout(): void {
   document.body.classList.toggle('hide-captions', hideSidebarCaptions)
   sidebarCaptionsToggle.classList.toggle('active', !hideSidebarCaptions)
   sidebarCaptionsToggle.setAttribute('aria-pressed', String(!hideSidebarCaptions))
-  labelButton(sidebarCaptionsToggle, hideSidebarCaptions ? 'sidebarCaptionsShow' : 'sidebarCaptionsHide')
+  labelButton(
+    sidebarCaptionsToggle,
+    hideSidebarCaptions ? 'sidebarCaptionsShow' : 'sidebarCaptionsHide',
+  )
 }
 
 function setOverlayPlaques(count: number): void {
@@ -648,7 +938,11 @@ function currentKey(): string {
 }
 
 function providerTitle(): string {
-  return settings.provider === 'openai' ? 'OpenAI' : settings.provider === 'groq' ? 'Groq' : 'Gemini'
+  return settings.provider === 'openai'
+    ? 'OpenAI'
+    : settings.provider === 'groq'
+      ? 'Groq'
+      : 'Gemini'
 }
 
 function llmIssueKey(stage: 'transcribe' | 'translate', kind: ApiFailureKind | 'empty'): string {
@@ -670,7 +964,11 @@ function llmIssueKey(stage: 'transcribe' | 'translate', kind: ApiFailureKind | '
   return stage === 'transcribe' ? `issueTranscribe${suffix}` : `issueTranslate${suffix}`
 }
 
-function reportLlmIssue(stage: 'transcribe' | 'translate', kind: ApiFailureKind | 'empty', error?: unknown): void {
+function reportLlmIssue(
+  stage: 'transcribe' | 'translate',
+  kind: ApiFailureKind | 'empty',
+  error?: unknown,
+): void {
   const key = llmIssueKey(stage, kind)
   const fallback = stage === 'transcribe' ? 'issueTranscribeUnknown' : 'issueTranslateUnknown'
   const template = chrome.i18n.getMessage(key) || chrome.i18n.getMessage(fallback)
@@ -947,7 +1245,13 @@ function drawWave(now: number): void {
     if (waveDisplay[peak] > 0.32) {
       waveCtx.beginPath()
       waveCtx.fillStyle = 'rgba(201, 146, 42, 0.92)'
-      waveCtx.arc((peak / (WAVE_POINTS - 1)) * width, mid - waveDisplay[peak] * amp, 2.1 * dpr, 0, Math.PI * 2)
+      waveCtx.arc(
+        (peak / (WAVE_POINTS - 1)) * width,
+        mid - waveDisplay[peak] * amp,
+        2.1 * dpr,
+        0,
+        Math.PI * 2,
+      )
       waveCtx.fill()
     }
   }
