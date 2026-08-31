@@ -64,12 +64,13 @@ Skip rhetorical questions, check-ins ("can you hear me?", "слышно?"), tag 
 Keep the speaker's original wording, lightly cleaned.
 If none, return {"questions":[]}.`
 
-const ANSWER_PROMPT = `You help a meeting participant answer a question just asked.
+const ANSWER_PROMPT = `You help a meeting participant give a spoken answer.
 Return JSON only: {"en":"...","ru":"..."}
+No markdown, no XML, no HTML, no thinking, no tags.
 Each value is one short spoken sentence, 6–14 words.
-No greeting, no second sentence, no lists, no extra context.
+No greeting, no second sentence, no lists, no quotes around the sentence.
 Use the transcript. Do not invent meeting facts.
-If the transcript is not enough, one short sentence saying that.`
+If the transcript is not enough, say that in one short sentence.`
 
 export function looksRussian(text: string): boolean {
   const cyrillic = (text.match(/[а-яё]/gi) ?? []).length
@@ -85,7 +86,7 @@ export async function extractQuestions(
   if (!windowText.trim()) {
     return []
   }
-  const raw = await chatText(provider, apiKey, windowText, EXTRACT_QUESTIONS_PROMPT)
+  const raw = await chatText(provider, apiKey, windowText, EXTRACT_QUESTIONS_PROMPT, true)
   return parseQuestionList(raw)
 }
 
@@ -95,25 +96,32 @@ export async function answerQuestion(
   question: string,
   context: string,
 ): Promise<{ en: string; ru: string }> {
-  const user = context.trim()
-    ? `Question:\n${question}\n\nRecent transcript:\n${context}`
+  const recent = context.trim().split(/\n+/).slice(-10).join('\n')
+  const user = recent
+    ? `Question:\n${question}\n\nRecent transcript:\n${recent}`
     : `Question:\n${question}`
-  const raw = await chatText(provider, apiKey, user, ANSWER_PROMPT)
+  const raw = await chatText(provider, apiKey, user, ANSWER_PROMPT, true)
   return parseAnswerPair(raw)
 }
 
-function chatText(provider: ProviderId, apiKey: string, text: string, prompt: string): Promise<string> {
+function chatText(
+  provider: ProviderId,
+  apiKey: string,
+  text: string,
+  prompt: string,
+  json = false,
+): Promise<string> {
   if (provider === 'groq') {
     return chatOpenAiCompatible('https://api.groq.com/openai/v1', apiKey, text, prompt, [
       'openai/gpt-oss-20b',
       'qwen/qwen3.6-27b',
       'openai/gpt-oss-120b',
-    ])
+    ], json)
   }
   if (provider === 'gemini') {
     return geminiGenerate(apiKey, undefined, `${prompt}\n\n${text}`)
   }
-  return chatOpenAiCompatible('https://api.openai.com/v1', apiKey, text, prompt, ['gpt-4o-mini'])
+  return chatOpenAiCompatible('https://api.openai.com/v1', apiKey, text, prompt, ['gpt-4o-mini'], json)
 }
 
 function parseQuestionList(raw: string): string[] {
@@ -147,20 +155,55 @@ export function isCutQuestion(text: string): boolean {
 }
 
 function parseAnswerPair(raw: string): { en: string; ru: string } {
-  const trimmed = raw.trim()
-  const json = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/u, '')
+  const cleaned = stripModelJunk(raw)
+  const json = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/u, '')
   const parsed = tryParseJson(json) ?? tryParseJson(extractJsonObject(json))
   if (parsed && !Array.isArray(parsed)) {
-    const en = typeof parsed.en === 'string' ? parsed.en.replace(/\s+/g, ' ').trim() : ''
-    const ru = typeof parsed.ru === 'string' ? parsed.ru.replace(/\s+/g, ' ').trim() : ''
+    const en = sanitizeSpokenAnswer(typeof parsed.en === 'string' ? parsed.en : '')
+    const ru = sanitizeSpokenAnswer(typeof parsed.ru === 'string' ? parsed.ru : '')
     if (en || ru) {
       return { en, ru }
     }
   }
-  if (looksRussian(trimmed)) {
-    return { en: '', ru: trimmed.replace(/\s+/g, ' ') }
+  const fallback = sanitizeSpokenAnswer(cleaned)
+  if (!fallback) {
+    return { en: '', ru: '' }
   }
-  return { en: trimmed.replace(/\s+/g, ' '), ru: '' }
+  return looksRussian(fallback) ? { en: '', ru: fallback } : { en: fallback, ru: '' }
+}
+
+function stripModelJunk(text: string): string {
+  return text
+    .replace(/<think\b[^>]*>[\s\S]*?(?:<\/think>|$)/gi, ' ')
+    .replace(/<reasoning\b[^>]*>[\s\S]*?(?:<\/reasoning>|$)/gi, ' ')
+    .replace(/<\|[^|]*\|>/g, ' ')
+    .replace(/\[\/?(?:INST|SYS|think|reasoning|assistant|system)\]/gi, ' ')
+    .replace(/```(?:json|[\w+-]*)?\s*/gi, ' ')
+    .replace(/```/g, ' ')
+    .trim()
+}
+
+function sanitizeSpokenAnswer(text: string): string {
+  const clean = text
+    .replace(/<think\b[^>]*>[\s\S]*?(?:<\/think>|$)/gi, ' ')
+    .replace(/<\/?[a-z][\w:-]*\b[^>]*>/gi, ' ')
+    .replace(/<\|[^|]*\|>/g, ' ')
+    .replace(/[*_#>`]+/g, ' ')
+    .replace(/\\[ntr]/g, ' ')
+    .replace(/[{}\[\]"]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^[\s,.;:—–-]+/u, '')
+    .replace(/[\s,;:—–-]+$/u, '')
+  if (!clean) {
+    return ''
+  }
+  const sentence = (clean.match(/.*?[.!?…]+(?:\s|$)/u)?.[0] ?? clean).trim()
+  const words = sentence.split(/\s+/).filter(Boolean)
+  if (words.length > 16) {
+    return `${words.slice(0, 16).join(' ')}.`
+  }
+  return sentence
 }
 
 function tryParseJson(text: string | null): { questions?: unknown; en?: unknown; ru?: unknown } | unknown[] | null {
@@ -243,40 +286,58 @@ async function chatOpenAiCompatible(
   text: string,
   prompt: string,
   models: string[],
+  json = false,
 ): Promise<string> {
   let lastError = 'Translation failed'
   for (const model of models) {
-    try {
-      const response = await fetch(`${base}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+    const modes = json ? [true, false] : [false]
+    for (const asJson of modes) {
+      try {
+        const body: Record<string, unknown> = {
           model,
           temperature: 0.2,
           messages: [
             { role: 'system', content: prompt },
             { role: 'user', content: text },
           ],
-        }),
-      })
-      if (!response.ok) {
-        lastError = await readError(response)
-        if (!isRetryableModelError(lastError)) {
-          throw new Error(lastError)
         }
-        continue
-      }
-      const data = (await response.json()) as {
-        choices?: Array<{ message?: { content?: string } }>
-      }
-      return data.choices?.[0]?.message?.content?.trim() ?? ''
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error)
-      if (!isRetryableModelError(lastError)) {
-        throw error
+        if (asJson) {
+          body.response_format = { type: 'json_object' }
+        }
+        const response = await fetch(`${base}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+        })
+        if (!response.ok) {
+          lastError = await readError(response)
+          if (asJson) {
+            continue
+          }
+          if (!isRetryableModelError(lastError)) {
+            throw new Error(lastError)
+          }
+          break
+        }
+        const data = (await response.json()) as {
+          choices?: Array<{ message?: { content?: string } }>
+        }
+        const content = data.choices?.[0]?.message?.content?.trim() ?? ''
+        if (content) {
+          return content
+        }
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error)
+        if (asJson) {
+          continue
+        }
+        if (!isRetryableModelError(lastError)) {
+          throw error
+        }
+        break
       }
     }
   }
