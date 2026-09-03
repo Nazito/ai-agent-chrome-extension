@@ -4,6 +4,8 @@ import { isTranslateDirection, type TranslateDirection } from './shared/storage.
 
 let overlayTabIds = new Set<number>()
 let overlayEnabled = false
+let sidePanelVisible = false
+let hideOverlayTimer = 0
 let translateDirection: TranslateDirection = 'en-ru'
 const overlayStatusByTab = new Map<number, { original: boolean; translation: boolean }>()
 const OVERLAY_SEND_MS = 700
@@ -22,6 +24,39 @@ type OverlaySession = {
 }
 
 void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
+
+let sidePanelPorts = 0
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'jarvis-sidepanel') {
+    return
+  }
+  sidePanelPorts += 1
+  windowClearHideTimer()
+  port.onDisconnect.addListener(() => {
+    sidePanelPorts = Math.max(0, sidePanelPorts - 1)
+    if (sidePanelPorts > 0) {
+      return
+    }
+    hideOverlayTimer = setTimeout(() => {
+      hideOverlayTimer = 0
+      if (sidePanelPorts > 0 || sidePanelVisible) {
+        return
+      }
+      void hideOverlaysIfSidePanelClosed()
+    }, 250) as unknown as number
+  })
+})
+
+function windowClearHideTimer(): void {
+  if (hideOverlayTimer) {
+    clearTimeout(hideOverlayTimer)
+    hideOverlayTimer = 0
+  }
+}
+
+void overlayBoot.then(() => {
+  void hideOverlaysIfSidePanelClosed()
+})
 
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
@@ -77,8 +112,36 @@ chrome.runtime.onMessage.addListener(
       return true
     }
 
+    if (message.type === MessageType.GetTabStreamId) {
+      chrome.tabCapture.getMediaStreamId({ targetTabId: message.tabId }, (streamId) => {
+        const error = chrome.runtime.lastError
+        if (error?.message || !streamId) {
+          sendResponse({ ok: false, error: error?.message ?? chrome.i18n.getMessage('tabNoStream') })
+          return
+        }
+        sendResponse({ ok: true, streamId })
+      })
+      return true
+    }
+
+    if (message.type === MessageType.SidePanelPresence) {
+      windowClearHideTimer()
+      sidePanelVisible = message.visible === true
+      if (sidePanelVisible) {
+        sidePanelPorts = Math.max(sidePanelPorts, 1)
+        void chrome.storage.local.set({ sidePanelOpen: true })
+      } else {
+        void hideOverlaysIfSidePanelClosed()
+      }
+      sendResponse({ ok: true })
+      return false
+    }
+
     if (message.type === MessageType.EnableOverlay) {
       void overlayBoot.then(async () => {
+        if (!(await sidePanelIsOpen())) {
+          return
+        }
         if (isTranslateDirection(message.direction)) {
           translateDirection = message.direction
         }
@@ -169,9 +232,26 @@ chrome.runtime.onMessage.addListener(
 
     if (
       message.type === MessageType.ShowOverlayQuestion ||
-      message.type === MessageType.ShowOverlayAnswer ||
-      message.type === MessageType.ClearOverlayQuestions
+      message.type === MessageType.ShowOverlayAnswer
     ) {
+      void overlayBoot.then(() => enqueueOverlay(message))
+      sendResponse({ ok: true })
+      return false
+    }
+
+    if (message.type === MessageType.ClearOverlayQuestions) {
+      if (sender.tab) {
+        void chrome.runtime.sendMessage(message).catch(() => undefined)
+      }
+      void overlayBoot.then(() => enqueueOverlay(message))
+      sendResponse({ ok: true })
+      return false
+    }
+
+    if (message.type === MessageType.CloseOverlayPlaque) {
+      if (sender.tab) {
+        void chrome.runtime.sendMessage(message).catch(() => undefined)
+      }
       void overlayBoot.then(() => enqueueOverlay(message))
       sendResponse({ ok: true })
       return false
@@ -256,6 +336,9 @@ function errorMessage(error: unknown): string {
 }
 
 async function handleActionClick(tab: chrome.tabs.Tab): Promise<void> {
+  sidePanelVisible = true
+  windowClearHideTimer()
+  void chrome.storage.local.set({ sidePanelOpen: true })
   if (tab.id !== undefined) {
     try {
       await chrome.sidePanel.open({ tabId: tab.id })
@@ -281,6 +364,11 @@ async function handleActionClick(tab: chrome.tabs.Tab): Promise<void> {
 
 async function restoreOverlaySession(): Promise<void> {
   try {
+    if (!(await sidePanelIsOpen())) {
+      overlayEnabled = false
+      persistOverlaySession()
+      return
+    }
     const stored = (await chrome.storage.session.get('overlaySession')) as {
       overlaySession?: OverlaySession
     }
@@ -296,6 +384,19 @@ async function restoreOverlaySession(): Promise<void> {
   } catch {
     // session storage may be unavailable
   }
+}
+
+async function sidePanelIsOpen(): Promise<boolean> {
+  return sidePanelVisible
+}
+
+async function hideOverlaysIfSidePanelClosed(): Promise<void> {
+  if (await sidePanelIsOpen()) {
+    return
+  }
+  sidePanelVisible = false
+  void chrome.storage.local.set({ sidePanelOpen: false })
+  await disableOverlay()
 }
 
 function persistOverlaySession(): void {
@@ -328,6 +429,8 @@ async function disableOverlay(): Promise<void> {
   overlayEnabled = false
   persistOverlaySession()
   await enqueueOverlay({ type: MessageType.DisableOverlay })
+  const tabIds = await allHttpTabIds()
+  await Promise.all(tabIds.map((tabId) => hideOverlayDom(tabId)))
   overlayTabIds.clear()
   overlayStatusByTab.clear()
   persistOverlaySession()
@@ -345,6 +448,31 @@ async function injectOverlay(tabId: number): Promise<void> {
       .then(() => undefined),
     OVERLAY_INJECT_MS,
   )
+}
+
+async function hideOverlayDom(tabId: number): Promise<void> {
+  await chrome.scripting
+    .executeScript({
+      target: { tabId },
+      func: () => {
+        const hud = (window as Window & { __jarvisHud?: { hide?: () => void } }).__jarvisHud
+        if (typeof hud?.hide === 'function') {
+          hud.hide()
+          return
+        }
+        for (const id of [
+          'jarvis-plaque-original',
+          'jarvis-plaque-translation',
+          'jarvis-plaque-questions',
+        ]) {
+          const host = document.getElementById(id)
+          if (host) {
+            host.style.setProperty('display', 'none', 'important')
+          }
+        }
+      },
+    })
+    .catch(() => undefined)
 }
 
 async function ensureOverlay(tabId: number): Promise<void> {
@@ -404,7 +532,8 @@ function enqueueOverlay(message: ExtensionMessage): Promise<void> {
     message.type === MessageType.ShowOverlayQuestion ||
     message.type === MessageType.ShowOverlayAnswer ||
     message.type === MessageType.DismissOverlayQuestion ||
-    message.type === MessageType.ClearOverlayQuestions
+    message.type === MessageType.ClearOverlayQuestions ||
+    message.type === MessageType.CloseOverlayPlaque
   if (live) {
     return overlayBoot.then(() => broadcastOverlay(message)).catch(() => undefined)
   }
@@ -420,20 +549,27 @@ async function broadcastOverlay(message: ExtensionMessage): Promise<void> {
       message.type === MessageType.ShowOverlayQuestion ||
       message.type === MessageType.ShowOverlayAnswer)
   ) {
+    if (!sidePanelVisible) {
+      return
+    }
     overlayEnabled = true
     persistOverlaySession()
   }
-  const tabIds =
-    message.type === MessageType.DisableOverlay
-      ? [...overlayTabIds]
-      : overlayEnabled
-        ? await overlayTargets()
-        : []
+  const fanOut =
+    message.type === MessageType.DisableOverlay ||
+    message.type === MessageType.ClearOverlayQuestions ||
+    message.type === MessageType.CloseOverlayPlaque
+  const tabIds = fanOut ? await allHttpTabIds() : overlayEnabled ? await overlayTargets() : []
   if (message.type !== MessageType.DisableOverlay && overlayEnabled) {
     overlayTabIds = new Set(tabIds)
     persistOverlaySession()
   }
   await Promise.all(tabIds.map((tabId) => sendOverlayToTab(tabId, message)))
+}
+
+async function allHttpTabIds(): Promise<number[]> {
+  const tabs = await chrome.tabs.query({})
+  return tabs.filter((tab) => tab.id && isHttpTab(tab)).map((tab) => tab.id as number)
 }
 
 function isHttpUrl(url: string): boolean {
@@ -496,6 +632,8 @@ async function publishPlaqueCount(): Promise<void> {
 }
 
 async function openCaptionWindow(): Promise<void> {
+  sidePanelVisible = true
+  windowClearHideTimer()
   await closeCaptionWindows()
   const tabs = await chrome.tabs.query({})
   const httpTabs = tabs.filter((tab) => tab.id && isHttpTab(tab))
