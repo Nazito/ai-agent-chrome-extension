@@ -66,6 +66,8 @@ let extractBusy = false
 let extractQueued = false
 let hintLockUntil = 0
 let silentSince = 0
+let sidePanelClosing = false
+let sidePanelPort: chrome.runtime.Port | null = null
 let liveIssue: { status: string; hint: string } | null = null
 const whisperQueue: Array<{ blob: Blob; at: number }> = []
 const translateQueue: string[] = []
@@ -116,16 +118,31 @@ syncLayout()
 syncCaptionsButton()
 syncDirectionUi()
 void chrome.runtime.sendMessage({ type: MessageType.RequestPlaqueCount }).catch(() => undefined)
+connectSidePanelPort()
 reportSidePanel()
+void chrome.runtime.sendMessage({
+  type: MessageType.SidePanelPresence,
+  visible: document.visibilityState === 'visible',
+}).catch(() => undefined)
 window.addEventListener('resize', reportSidePanel)
-window.addEventListener('pagehide', () => {
-  void chrome.storage.local.set({ sidePanelOpen: false })
-})
+window.addEventListener('pagehide', closeSidePanelOverlays)
+window.addEventListener('beforeunload', closeSidePanelOverlays)
 document.addEventListener('visibilitychange', () => {
-  void chrome.storage.local.set({
-    sidePanelOpen: document.visibilityState === 'visible',
-    sidePanelWidth: Math.round(window.innerWidth),
-  })
+  const visible = document.visibilityState === 'visible'
+  void chrome.runtime
+    .sendMessage({ type: MessageType.SidePanelPresence, visible })
+    .catch(() => undefined)
+  if (!visible) {
+    hideOverlaysFromSidePanel()
+    return
+  }
+  sidePanelClosing = false
+  reportSidePanel()
+  connectSidePanelPort()
+  if (tab.active) {
+    startOverlayKeepAlive()
+    void sendOverlay({ type: MessageType.EnableOverlay, direction: translateDirection })
+  }
 })
 
 void chrome.storage.local.get({ sidebarCaptionsHidden: true }).then((stored) => {
@@ -224,6 +241,17 @@ chrome.runtime.onMessage.addListener(
     }
     if (message.type === MessageType.ClearOverlayCaption) {
       clearCaptionBoxes(message.target)
+    }
+    if (message.type === MessageType.ClearOverlayQuestions) {
+      hideAllQuestionPlaques()
+    }
+    if (message.type === MessageType.CloseOverlayPlaque && message.target) {
+      if (message.target === 'original') {
+        clearCaptionBoxes('original')
+      }
+      if (message.target === 'translation') {
+        clearCaptionBoxes('translation')
+      }
     }
     if (message.type === MessageType.DismissOverlayQuestion && message.id) {
       dismissQuestion(message.id)
@@ -629,6 +657,44 @@ function sendAnswer(item: (typeof visibleQuestions)[number], error?: string): vo
   })
 }
 
+function hideOverlaysFromSidePanel(): void {
+  stopOverlayKeepAlive()
+  void chrome.storage.local.set({ sidePanelOpen: false })
+  void sendOverlay({ type: MessageType.DisableOverlay })
+}
+
+function closeSidePanelOverlays(): void {
+  if (sidePanelClosing) {
+    return
+  }
+  sidePanelClosing = true
+  hideOverlaysFromSidePanel()
+  void chrome.runtime
+    .sendMessage({ type: MessageType.SidePanelPresence, visible: false })
+    .catch(() => undefined)
+}
+
+function connectSidePanelPort(): void {
+  if (sidePanelClosing || sidePanelPort) {
+    return
+  }
+  const port = chrome.runtime.connect({ name: 'jarvis-sidepanel' })
+  sidePanelPort = port
+  port.onDisconnect.addListener(() => {
+    if (sidePanelPort === port) {
+      sidePanelPort = null
+    }
+    if (sidePanelClosing || document.visibilityState === 'hidden') {
+      return
+    }
+    connectSidePanelPort()
+  })
+}
+
+function hideAllQuestionPlaques(): void {
+  dismissQuestion('*')
+}
+
 function dismissQuestion(id: string): void {
   if (id === '*') {
     for (const item of visibleQuestions) {
@@ -833,19 +899,11 @@ function requestCaptionClear(target?: 'original' | 'translation'): void {
 }
 
 async function requestHostPermission(): Promise<void> {
-  let granted = false
-  try {
-    granted = await chrome.permissions.request({ origins: ['http://*/*', 'https://*/*'] })
-  } catch {
-    granted = false
-  }
-  if (!granted) {
-    const allowed = await chrome.permissions
-      .contains({ origins: ['https://*/*'] })
-      .catch(() => false)
-    if (!allowed) {
-      throw new NamedError('overlay-denied', chrome.i18n.getMessage('issueOverlayDenied'))
-    }
+  const allowed = await chrome.permissions
+    .contains({ origins: ['<all_urls>'] })
+    .catch(() => false)
+  if (!allowed) {
+    throw new NamedError('overlay-denied', chrome.i18n.getMessage('issueOverlayDenied'))
   }
 }
 

@@ -84,7 +84,7 @@
     "message": "Hearing the tab"
   },
   "tabRequestHint": {
-    "message": "Choose the Chrome tab to share. Captions appear on that tab."
+    "message": "Capturing the meeting tab in this window. Captions appear on that tab."
   },
   "tabLiveHint": {
     "message": "Translation appears on the tab you are sharing. Drag the cyan Jarvis card there."

@@ -1,8 +1,15 @@
-type HudHandle = { teardown: () => void; enable: () => void }
+type HudHandle = { teardown: () => void; enable: () => void; hide: () => void }
 type PlaqueKind = 'original' | 'translation'
 
+void (function bootJarvisOverlay(): void {
+if (window !== window.top) {
+  return
+}
+if (!chrome?.i18n || typeof chrome.i18n.getMessage !== 'function') {
+  return
+}
 const overlayWindow = window as Window & { __jarvisHud?: HudHandle; __jarvisHudRev?: number }
-const HUD_REV = 22
+const HUD_REV = 25
 const STYLE_ID = 'jarvis-hud-style'
 const HOST_IDS = {
   original: 'jarvis-plaque-original',
@@ -28,6 +35,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
   if (changes.sidePanelOpen) {
     sidePanelOpen = changes.sidePanelOpen.newValue === true
+    if (!sidePanelOpen) {
+      overlayWindow.__jarvisHud?.hide()
+    }
   }
   if (changes.sidePanelWidth) {
     sidePanelWidth = Number(changes.sidePanelWidth.newValue) || 360
@@ -35,12 +45,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
   clampMountedPlaques()
 })
 
-if (window === window.top) {
-  if (overlayWindow.__jarvisHudRev !== HUD_REV || !overlayWindow.__jarvisHud) {
-    overlayWindow.__jarvisHud?.teardown()
-    overlayWindow.__jarvisHud = startOverlay()
-    overlayWindow.__jarvisHudRev = HUD_REV
-  }
+if (overlayWindow.__jarvisHudRev !== HUD_REV || !overlayWindow.__jarvisHud) {
+  overlayWindow.__jarvisHud?.teardown()
+  overlayWindow.__jarvisHud = startOverlay()
+  overlayWindow.__jarvisHudRev = HUD_REV
 }
 
 function startOverlay(): HudHandle {
@@ -139,6 +147,9 @@ function startOverlay(): HudHandle {
       closedOriginal = true
       render()
       reportStatus()
+      void chrome.runtime
+        .sendMessage({ type: 'CLOSE_OVERLAY_PLAQUE', target: 'original' })
+        .catch(() => undefined)
     },
     onClear() {
       void chrome.runtime
@@ -154,6 +165,9 @@ function startOverlay(): HudHandle {
       closedTranslation = true
       render()
       reportStatus()
+      void chrome.runtime
+        .sendMessage({ type: 'CLOSE_OVERLAY_PLAQUE', target: 'translation' })
+        .catch(() => undefined)
     },
     onClear() {
       void chrome.runtime
@@ -166,12 +180,9 @@ function startOverlay(): HudHandle {
     title: chrome.i18n.getMessage('overlayQuestions') || 'Questions',
     onCloseAll() {
       closedQuestions = true
-      const ids = questionsPlaque.ids()
       questionsPlaque.clear()
       render()
-      for (const id of ids) {
-        void chrome.runtime.sendMessage({ type: 'DISMISS_OVERLAY_QUESTION', id }).catch(() => undefined)
-      }
+      void chrome.runtime.sendMessage({ type: 'CLEAR_OVERLAY_QUESTIONS' }).catch(() => undefined)
     },
     onDismiss(id) {
       void chrome.runtime.sendMessage({ type: 'DISMISS_OVERLAY_QUESTION', id }).catch(() => undefined)
@@ -221,6 +232,20 @@ function startOverlay(): HudHandle {
     questionsPlaque.mount(root)
   }
 
+  function hideHud(): void {
+    visible = false
+    originals.length = 0
+    translations.length = 0
+    lastOriginal = ''
+    closedOriginal = true
+    closedTranslation = true
+    closedQuestions = true
+    originalPlaque.clear()
+    translationPlaque.clear()
+    questionsPlaque.clear()
+    render()
+  }
+
   function onMessage(message: {
     type?: string
     original?: string
@@ -250,6 +275,9 @@ function startOverlay(): HudHandle {
       return
     }
     if (message.type === 'SHOW_OVERLAY_CAPTION') {
+      if (!sidePanelOpen && !visible) {
+        return
+      }
       if (closedOriginal && closedTranslation) {
         return
       }
@@ -270,7 +298,21 @@ function startOverlay(): HudHandle {
       render()
       return
     }
+    if (message.type === 'CLOSE_OVERLAY_PLAQUE') {
+      if (message.target === 'original') {
+        closedOriginal = true
+      }
+      if (message.target === 'translation') {
+        closedTranslation = true
+      }
+      render()
+      reportStatus()
+      return
+    }
     if (message.type === 'SHOW_OVERLAY_QUESTION' && message.id && message.question) {
+      if (!sidePanelOpen && !visible) {
+        return
+      }
       closedQuestions = false
       questionsPlaque.upsert(message.id, {
         question: message.question,
@@ -286,6 +328,9 @@ function startOverlay(): HudHandle {
       return
     }
     if (message.type === 'SHOW_OVERLAY_ANSWER' && message.id) {
+      if (!sidePanelOpen && !visible) {
+        return
+      }
       questionsPlaque.setAnswer(message.id, {
         answer: message.answer,
         answerEn: message.answerEn,
@@ -297,20 +342,12 @@ function startOverlay(): HudHandle {
     }
     if (message.type === 'CLEAR_OVERLAY_QUESTIONS') {
       questionsPlaque.clear()
-      closedQuestions = false
+      closedQuestions = true
       render()
       return
     }
     if (message.type === 'DISABLE_OVERLAY') {
-      visible = false
-      originals.length = 0
-      translations.length = 0
-      lastOriginal = ''
-      originalPlaque.clear()
-      translationPlaque.clear()
-      questionsPlaque.clear()
-      closedQuestions = false
-      render()
+      hideHud()
     }
   }
 
@@ -384,6 +421,9 @@ function startOverlay(): HudHandle {
       closedTranslation = false
       visible = true
       render()
+    },
+    hide() {
+      hideHud()
     },
     teardown() {
       chrome.runtime.onMessage.removeListener(onRuntimeMessage)
@@ -1264,3 +1304,4 @@ function followBottom(host: HTMLElement, durationMs = 520): void {
   }
   requestAnimationFrame(tick)
 }
+})()

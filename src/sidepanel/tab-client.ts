@@ -1,3 +1,5 @@
+import { MessageType } from '../shared/messages.js'
+
 const MIN_CHUNK_SECONDS = 1.6
 const MAX_CHUNK_SECONDS = 3
 const SILENCE_FLUSH_SECONDS = 0.5
@@ -7,7 +9,6 @@ const MIN_SPEECH_SECONDS = 0.7
 const SPEECH_RMS = 0.008
 const SILENCE_RMS = 0.006
 const METER_MS = 80
-const PROCESSOR_BUFFER = 4096
 
 export type TabAudioHandlers = {
   onLevel: (level: number, bands: number[]) => void
@@ -18,7 +19,7 @@ export class TabAudioSession {
   private captureStream: MediaStream | null = null
   private audioContext: AudioContext | null = null
   private analyser: AnalyserNode | null = null
-  private processor: ScriptProcessorNode | null = null
+  private worklet: AudioWorkletNode | null = null
   private readonly preview: HTMLVideoElement
   private meterTimer = 0
   private generation = 0
@@ -75,21 +76,22 @@ export class TabAudioSession {
     this.analyser = this.audioContext.createAnalyser()
     this.analyser.fftSize = 512
     this.analyser.smoothingTimeConstant = 0.4
-    this.processor = this.audioContext.createScriptProcessor(PROCESSOR_BUFFER, 1, 1)
+    await this.audioContext.audioWorklet.addModule(chrome.runtime.getURL('sidepanel/pcm-worklet.js'))
+    this.worklet = new AudioWorkletNode(this.audioContext, 'jarvis-pcm')
     const sink = this.audioContext.createGain()
     sink.gain.value = 0
 
     source.connect(this.analyser)
-    source.connect(this.processor)
-    this.processor.connect(sink)
+    source.connect(this.worklet)
+    this.worklet.connect(sink)
     sink.connect(this.audioContext.destination)
 
     const generation = ++this.generation
-    this.processor.onaudioprocess = (event) => {
+    this.worklet.port.onmessage = (event: MessageEvent<Float32Array>) => {
       if (!this.wanted || this.generation !== generation) {
         return
       }
-      this.collectPcm(event.inputBuffer.getChannelData(0))
+      this.collectPcm(event.data)
     }
 
     this.meterLoop()
@@ -99,11 +101,11 @@ export class TabAudioSession {
     this.wanted = false
     this.generation += 1
     window.clearTimeout(this.meterTimer)
-    if (this.processor) {
-      this.processor.onaudioprocess = null
-      this.processor.disconnect()
+    if (this.worklet) {
+      this.worklet.port.onmessage = null
+      this.worklet.disconnect()
     }
-    this.processor = null
+    this.worklet = null
     this.captureStream?.getTracks().forEach((track) => track.stop())
     this.captureStream = null
     this.resetBuffers()
@@ -218,7 +220,111 @@ export class TabAudioSession {
   }
 }
 
-export function pickTabAudio(): Promise<MediaStream> {
+const MEETING_RE = /meet\.google\.com|zoom\.us|teams\.microsoft\.com|teams\.live\.com/
+
+export async function pickTabAudio(): Promise<MediaStream> {
+  const tabId = await resolveCaptureTabId()
+  if (tabId !== undefined) {
+    await chrome.tabs.update(tabId, { active: true }).catch(() => undefined)
+    try {
+      return await captureTabById(tabId)
+    } catch {
+      // tabCapture can still fail without a user gesture on that tab.
+    }
+  }
+  return captureTabWithPicker()
+}
+
+async function resolveCaptureTabId(): Promise<number | undefined> {
+  const currentWindow = await chrome.windows.getCurrent()
+  const tabs = await chrome.tabs.query({})
+  const http = tabs.filter((tab) => tab.id && isHttpUrl(tab.url ?? tab.pendingUrl ?? ''))
+  const sameWindow = http.filter((tab) => tab.windowId === currentWindow.id)
+  const activeHere = sameWindow.find((tab) => tab.active)
+
+  if (activeHere?.id && isMeetingUrl(activeHere.url ?? '')) {
+    return activeHere.id
+  }
+  const audibleMeeting = http.find((tab) => tab.audible && isMeetingUrl(tab.url ?? ''))
+  if (audibleMeeting?.id) {
+    return audibleMeeting.id
+  }
+  const meetingHere = sameWindow.find((tab) => isMeetingUrl(tab.url ?? ''))
+  if (meetingHere?.id) {
+    return meetingHere.id
+  }
+  const anyMeeting = http.find((tab) => isMeetingUrl(tab.url ?? ''))
+  if (anyMeeting?.id) {
+    return anyMeeting.id
+  }
+  const audible = http.find((tab) => tab.audible)
+  if (audible?.id) {
+    return audible.id
+  }
+  return activeHere?.id
+}
+
+function isHttpUrl(url: string): boolean {
+  return url.startsWith('https://') || url.startsWith('http://')
+}
+
+function isMeetingUrl(url: string): boolean {
+  return MEETING_RE.test(url)
+}
+
+async function captureTabById(tabId: number): Promise<MediaStream> {
+  const streamId = await getTabStreamId(tabId)
+  try {
+    return await navigator.mediaDevices.getUserMedia(tabConstraints(streamId, false))
+  } catch {
+    return navigator.mediaDevices.getUserMedia(tabConstraints(streamId, true))
+  }
+}
+
+async function getTabStreamId(targetTabId: number): Promise<string> {
+  const fromApi = await new Promise<string>((resolve, reject) => {
+    chrome.tabCapture.getMediaStreamId({ targetTabId }, (streamId) => {
+      const error = chrome.runtime.lastError
+      if (error?.message || !streamId) {
+        reject(new Error(error?.message ?? chrome.i18n.getMessage('tabNoStream')))
+        return
+      }
+      resolve(streamId)
+    })
+  }).catch(() => '')
+  if (fromApi) {
+    return fromApi
+  }
+  const response = (await chrome.runtime.sendMessage({
+    type: MessageType.GetTabStreamId,
+    tabId: targetTabId,
+  })) as { ok: true; streamId?: string } | { ok: false; error?: string } | undefined
+  if (response && response.ok && response.streamId) {
+    return response.streamId
+  }
+  throw new Error(
+    (response && 'error' in response && response.error) || chrome.i18n.getMessage('tabNoStream'),
+  )
+}
+
+function tabConstraints(streamId: string, withVideo: boolean): MediaStreamConstraints {
+  const mandatory = {
+    chromeMediaSource: 'tab',
+    chromeMediaSourceId: streamId,
+  }
+  if (withVideo) {
+    return {
+      audio: { mandatory },
+      video: { mandatory },
+    } as unknown as MediaStreamConstraints
+  }
+  return {
+    audio: { mandatory },
+    video: false,
+  } as unknown as MediaStreamConstraints
+}
+
+function captureTabWithPicker(): Promise<MediaStream> {
   return new Promise((resolve, reject) => {
     chrome.desktopCapture.chooseDesktopMedia(['tab', 'audio'], (streamId, options) => {
       if (!streamId) {

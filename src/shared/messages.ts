@@ -24,6 +24,9 @@ export const MessageType = {
   RequestOverlayAnswer: 'REQUEST_OVERLAY_ANSWER',
   ShowOverlayAnswer: 'SHOW_OVERLAY_ANSWER',
   ClearOverlayQuestions: 'CLEAR_OVERLAY_QUESTIONS',
+  CloseOverlayPlaque: 'CLOSE_OVERLAY_PLAQUE',
+  SidePanelPresence: 'SIDE_PANEL_PRESENCE',
+  GetTabStreamId: 'GET_TAB_STREAM_ID',
 } as const
 
 export type CaptureSource = 'tab' | 'desktop'
@@ -66,5 +69,10 @@ export type ExtensionMessage =
       error?: string
     }
   | { type: typeof MessageType.ClearOverlayQuestions }
+  | { type: typeof MessageType.CloseOverlayPlaque; target: 'original' | 'translation' }
+  | { type: typeof MessageType.SidePanelPresence; visible: boolean }
+  | { type: typeof MessageType.GetTabStreamId; tabId: number }
 
-export type CommandResponse = { ok: true } | { ok: false; error?: string; code?: string }
+export type CommandResponse =
+  | { ok: true; streamId?: string }
+  | { ok: false; error?: string; code?: string }
