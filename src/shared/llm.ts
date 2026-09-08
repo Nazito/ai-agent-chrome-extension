@@ -1,5 +1,10 @@
 import { type ProviderId, type TranslateDirection } from './storage.js'
 
+export type AnswerContext = {
+  profile?: string
+  badges?: string[]
+}
+
 const TRANSLATE_EN_RU =
   'You translate English speech from a live meeting into natural Russian. Keep meaning and tone. Return only the Russian translation.'
 const TRANSLATE_RU_EN =
@@ -64,13 +69,22 @@ Skip rhetorical questions, check-ins ("can you hear me?", "слышно?"), tag 
 Keep the speaker's original wording, lightly cleaned.
 If none, return {"questions":[]}.`
 
-const ANSWER_PROMPT = `You help a meeting participant give a spoken answer.
+function answerPrompt(context: AnswerContext): string {
+  const profile = context.profile?.trim() ?? ''
+  const tags = (context.badges ?? [])
+    .map((badge) => badge.replace(/-/g, ' ').trim())
+    .filter(Boolean)
+    .join(', ')
+  return `You help a meeting participant answer out loud as themselves.
 Return JSON only: {"en":"...","ru":"..."}
 No markdown, no XML, no HTML, no thinking, no tags.
-Each value is one short spoken sentence, 6–14 words.
-No greeting, no second sentence, no lists, no quotes around the sentence.
-Use the transcript. Do not invent meeting facts.
-If the transcript is not enough, say that in one short sentence.`
+Answers are spoken-ready and laconic: 1–4 short sentences, no filler, no greeting, no lists.
+Use the profile for personal, career, and skill questions. Do not invent facts that are not in the profile or transcript.
+Use the transcript for what was just said. Do not invent meeting facts.
+If profile and transcript are not enough, say that briefly.
+${profile ? `Speaker profile:\n${profile}\n` : 'No speaker profile is set. If the question is personal, say you do not have that detail.\n'}
+${tags ? `Meeting context tags: ${tags}. Tune tone and focus to these tags.\n` : ''}`
+}
 
 export function looksRussian(text: string): boolean {
   const cyrillic = (text.match(/[а-яё]/gi) ?? []).length
@@ -94,13 +108,14 @@ export async function answerQuestion(
   provider: ProviderId,
   apiKey: string,
   question: string,
-  context: string,
+  transcript: string,
+  context: AnswerContext = {},
 ): Promise<{ en: string; ru: string }> {
-  const recent = context.trim().split(/\n+/).slice(-10).join('\n')
+  const recent = transcript.trim().split(/\n+/).slice(-16).join('\n')
   const user = recent
     ? `Question:\n${question}\n\nRecent transcript:\n${recent}`
     : `Question:\n${question}`
-  const raw = await chatText(provider, apiKey, user, ANSWER_PROMPT, true)
+  const raw = await chatText(provider, apiKey, user, answerPrompt(context), true)
   return parseAnswerPair(raw)
 }
 
@@ -198,12 +213,18 @@ function sanitizeSpokenAnswer(text: string): string {
   if (!clean) {
     return ''
   }
-  const sentence = (clean.match(/.*?[.!?…]+(?:\s|$)/u)?.[0] ?? clean).trim()
-  const words = sentence.split(/\s+/).filter(Boolean)
-  if (words.length > 16) {
-    return `${words.slice(0, 16).join(' ')}.`
+  const sentences = clean.split(/(?<=[.!?…])\s+/u).filter(Boolean).slice(0, 4)
+  const kept: string[] = []
+  let words = 0
+  for (const sentence of sentences) {
+    const count = sentence.split(/\s+/).filter(Boolean).length
+    if (kept.length > 0 && words + count > 70) {
+      break
+    }
+    kept.push(sentence)
+    words += count
   }
-  return sentence
+  return kept.join(' ')
 }
 
 function tryParseJson(text: string | null): { questions?: unknown; en?: unknown; ru?: unknown } | unknown[] | null {

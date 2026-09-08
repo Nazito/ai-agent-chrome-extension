@@ -84,6 +84,124 @@ export function emptyKeys(): Record<ProviderId, string> {
   return { ...EMPTY_KEYS }
 }
 
+export const PRESET_BADGES = [
+  'job-interview',
+  'javascript',
+  'typescript',
+  'react',
+  'frontend',
+  'backend',
+  'system-design',
+  'code-review',
+  'one-on-one',
+  'standup',
+] as const
+
+export const PROFILE_QUESTIONS = [
+  'name',
+  'role',
+  'experience',
+  'stack',
+  'goal',
+  'languages',
+  'notes',
+] as const
+
+export type ProfileQuestionId = (typeof PROFILE_QUESTIONS)[number]
+
+export type MeetingProfile = {
+  profile: string
+  answers: Record<string, string>
+  profileCustom: boolean
+  badges: string[]
+  customBadges: string[]
+}
+
+export async function loadMeetingProfile(): Promise<MeetingProfile> {
+  const stored = await chrome.storage.local.get({
+    userProfile: '',
+    profileAnswers: {} as Record<string, string>,
+    profileCustom: false,
+    contextBadges: [] as string[],
+    customBadges: [] as string[],
+  })
+  const answers = normalizeAnswers(stored.profileAnswers)
+  const profile = String(stored.userProfile ?? '').slice(0, 4000)
+  const hasAnswers = PROFILE_QUESTIONS.some((id) => answers[id])
+  return {
+    profile,
+    answers,
+    profileCustom: stored.profileCustom === true || (profile.length > 0 && !hasAnswers),
+    badges: normalizeBadgeList(stored.contextBadges),
+    customBadges: normalizeBadgeList(stored.customBadges),
+  }
+}
+
+export async function saveMeetingProfile(value: MeetingProfile): Promise<void> {
+  await chrome.storage.local.set({
+    userProfile: value.profile.slice(0, 4000),
+    profileAnswers: normalizeAnswers(value.answers),
+    profileCustom: value.profileCustom === true,
+    contextBadges: normalizeBadgeList(value.badges),
+    customBadges: normalizeBadgeList(value.customBadges),
+  })
+}
+
+export function compileProfile(
+  answers: Record<string, string>,
+  label: (id: ProfileQuestionId) => string,
+): string {
+  return PROFILE_QUESTIONS.map((id) => {
+    const value = (answers[id] ?? '').replace(/\s+/g, ' ').trim()
+    if (!value) {
+      return ''
+    }
+    return `${label(id)}: ${value}`
+  })
+    .filter(Boolean)
+    .join('\n')
+    .slice(0, 4000)
+}
+
+function normalizeAnswers(value: unknown): Record<string, string> {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const answers: Record<string, string> = {}
+  for (const id of PROFILE_QUESTIONS) {
+    const raw = (source as Record<string, unknown>)[id]
+    const text = String(raw ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 280)
+    if (text) {
+      answers[id] = text
+    }
+  }
+  return answers
+}
+
+function normalizeBadgeList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  const seen = new Set<string>()
+  const list: string[] = []
+  for (const item of value) {
+    const badge = String(item ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 40)
+    if (!badge || seen.has(badge.toLowerCase())) {
+      continue
+    }
+    seen.add(badge.toLowerCase())
+    list.push(badge)
+    if (list.length >= 16) {
+      break
+    }
+  }
+  return list
+}
+
 export function uiLanguage(): 'ru' | 'en' {
   return chrome.i18n.getUILanguage().toLowerCase().startsWith('ru') ? 'ru' : 'en'
 }

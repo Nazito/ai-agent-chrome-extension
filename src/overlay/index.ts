@@ -9,7 +9,7 @@ if (!chrome?.i18n || typeof chrome.i18n.getMessage !== 'function') {
   return
 }
 const overlayWindow = window as Window & { __jarvisHud?: HudHandle; __jarvisHudRev?: number }
-const HUD_REV = 25
+const HUD_REV = 26
 const STYLE_ID = 'jarvis-hud-style'
 const HOST_IDS = {
   original: 'jarvis-plaque-original',
@@ -847,7 +847,7 @@ function plaqueCardCss(): string {
     }
     .answer {
       margin: 6px 0 0;
-      max-height: 6.4em;
+      max-height: 11em;
       overflow-y: auto;
       padding: 8px;
       border: 1px solid rgba(74, 99, 181, 0.16);

@@ -358,5 +358,86 @@
   },
   "captionsIncognito": {
     "message": "Вкладка в режиме инкогнито. chrome://extensions → Jarvis → Разрешить в режиме инкогнито."
+  },
+  "profileLabel": {
+    "message": "О себе"
+  },
+  "profileEmpty": {
+    "message": "Добавьте, кто вы — нажмите, чтобы заполнить профиль."
+  },
+  "profileDone": {
+    "message": "Готово"
+  },
+  "profilePlaceholder": {
+    "message": "Этот профиль Jarvis использует, чтобы отвечать за вас."
+  },
+  "profileSummaryLabel": {
+    "message": "Профиль"
+  },
+  "profileReset": {
+    "message": "Собрать из ответов"
+  },
+  "profileQName": {
+    "message": "Как вас зовут?"
+  },
+  "profileQRole": {
+    "message": "Кем работаете?"
+  },
+  "profileQExperience": {
+    "message": "Сколько лет опыта?"
+  },
+  "profileQStack": {
+    "message": "Какой стек?"
+  },
+  "profileQGoal": {
+    "message": "Что хотите от этого созвона?"
+  },
+  "profileQLanguages": {
+    "message": "Какими языками владеете?"
+  },
+  "profileQNotes": {
+    "message": "Что ещё стоит знать Jarvis?"
+  },
+  "badgesLabel": {
+    "message": "Контекст"
+  },
+  "badgeAddPlaceholder": {
+    "message": "Найти или добавить тег"
+  },
+  "badgeCreate": {
+    "message": "Добавить «$1»"
+  },
+  "badgeEmpty": {
+    "message": "Нет подходящих тегов"
+  },
+  "badgeJobInterview": {
+    "message": "Собеседование"
+  },
+  "badgeJavascript": {
+    "message": "JavaScript"
+  },
+  "badgeTypescript": {
+    "message": "TypeScript"
+  },
+  "badgeReact": {
+    "message": "React"
+  },
+  "badgeFrontend": {
+    "message": "Frontend"
+  },
+  "badgeBackend": {
+    "message": "Backend"
+  },
+  "badgeSystemDesign": {
+    "message": "System design"
+  },
+  "badgeCodeReview": {
+    "message": "Code review"
+  },
+  "badgeOneOnOne": {
+    "message": "1:1"
+  },
+  "badgeStandup": {
+    "message": "Стендап"
   }
 }
