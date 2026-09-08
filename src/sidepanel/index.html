@@ -93,6 +93,25 @@
         </div>
       </section>
 
+      <section class="context">
+        <div class="profile-card">
+          <span id="profile-label"></span>
+          <button id="profile-open" class="profile-open" type="button">
+            <span id="profile-preview" class="profile-preview"></span>
+          </button>
+        </div>
+        <div class="badges-block">
+          <span id="badges-label"></span>
+          <div class="tag-select" id="tag-select">
+            <div class="tag-field" id="tag-field">
+              <div id="badges" class="tag-chips"></div>
+              <input id="badge-input" type="text" maxlength="40" autocomplete="off" />
+            </div>
+            <div id="tag-menu" class="tag-menu" hidden></div>
+          </div>
+        </div>
+      </section>
+
       <div class="settings">
         <label class="key">
           <span id="provider-label"></span>
@@ -124,6 +143,25 @@
         </div>
       </footer>
     </div>
+    <dialog id="profile-modal" class="profile-modal">
+      <div class="profile-modal-head">
+        <h2 id="profile-modal-title"></h2>
+        <button id="profile-modal-close" class="profile-modal-x" type="button">×</button>
+      </div>
+      <div class="profile-modal-body">
+        <div id="profile-questions" class="profile-questions"></div>
+        <label class="key">
+          <span class="profile-summary-head">
+            <span id="profile-summary-label"></span>
+            <button id="profile-reset" class="profile-reset" type="button" hidden></button>
+          </span>
+          <textarea id="profile" rows="5" maxlength="4000"></textarea>
+        </label>
+      </div>
+      <div class="profile-modal-foot">
+        <button id="profile-modal-done" class="profile-done" type="button"></button>
+      </div>
+    </dialog>
     <script type="module" src="index.js"></script>
   </body>
 </html>

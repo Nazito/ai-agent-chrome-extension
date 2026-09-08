@@ -358,5 +358,86 @@
   },
   "captionsIncognito": {
     "message": "This tab is in Incognito. chrome://extensions → Jarvis → Allow in Incognito."
+  },
+  "profileLabel": {
+    "message": "About you"
+  },
+  "profileEmpty": {
+    "message": "Add who you are — tap to fill the profile."
+  },
+  "profileDone": {
+    "message": "Done"
+  },
+  "profilePlaceholder": {
+    "message": "This is the profile Jarvis uses to answer as you."
+  },
+  "profileSummaryLabel": {
+    "message": "Profile"
+  },
+  "profileReset": {
+    "message": "Rebuild from answers"
+  },
+  "profileQName": {
+    "message": "What is your name?"
+  },
+  "profileQRole": {
+    "message": "What is your role?"
+  },
+  "profileQExperience": {
+    "message": "How many years of experience?"
+  },
+  "profileQStack": {
+    "message": "What is your stack?"
+  },
+  "profileQGoal": {
+    "message": "What do you want from this call?"
+  },
+  "profileQLanguages": {
+    "message": "Which languages do you speak?"
+  },
+  "profileQNotes": {
+    "message": "Anything else Jarvis should know?"
+  },
+  "badgesLabel": {
+    "message": "Context"
+  },
+  "badgeAddPlaceholder": {
+    "message": "Search or add a tag"
+  },
+  "badgeCreate": {
+    "message": "Add “$1”"
+  },
+  "badgeEmpty": {
+    "message": "No matching tags"
+  },
+  "badgeJobInterview": {
+    "message": "Job interview"
+  },
+  "badgeJavascript": {
+    "message": "JavaScript"
+  },
+  "badgeTypescript": {
+    "message": "TypeScript"
+  },
+  "badgeReact": {
+    "message": "React"
+  },
+  "badgeFrontend": {
+    "message": "Frontend"
+  },
+  "badgeBackend": {
+    "message": "Backend"
+  },
+  "badgeSystemDesign": {
+    "message": "System design"
+  },
+  "badgeCodeReview": {
+    "message": "Code review"
+  },
+  "badgeOneOnOne": {
+    "message": "1:1"
+  },
+  "badgeStandup": {
+    "message": "Standup"
   }
 }

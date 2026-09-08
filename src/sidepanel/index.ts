@@ -16,10 +16,17 @@ import {
 import { MessageType } from '../shared/messages.js'
 import {
   loadLlmSettings,
+  loadMeetingProfile,
   loadTranslateDirection,
+  PRESET_BADGES,
+  PROFILE_QUESTIONS,
+  compileProfile,
+  saveMeetingProfile,
   saveProvider,
   saveProviderKey,
   type LlmSettings,
+  type MeetingProfile,
+  type ProfileQuestionId,
   type ProviderId,
   type TranslateDirection,
 } from '../shared/storage.js'
@@ -47,6 +54,46 @@ const providerSelect = document.getElementById('provider') as HTMLSelectElement
 const apiKeyLabel = document.getElementById('api-key-label')!
 const apiKeyHint = document.getElementById('api-key-hint')!
 const signalEl = document.getElementById('signal-value')!
+const profileEl = document.getElementById('profile') as HTMLTextAreaElement | null
+const profileLabel = document.getElementById('profile-label')
+const profileQuestionsEl = document.getElementById('profile-questions')
+const profileSummaryLabel = document.getElementById('profile-summary-label')
+const profileReset = document.getElementById('profile-reset') as HTMLButtonElement | null
+const profileOpen = document.getElementById('profile-open') as HTMLButtonElement | null
+const profilePreview = document.getElementById('profile-preview')
+const profileModal = document.getElementById('profile-modal') as HTMLDialogElement | null
+const profileModalTitle = document.getElementById('profile-modal-title')
+const profileModalClose = document.getElementById('profile-modal-close') as HTMLButtonElement | null
+const profileModalDone = document.getElementById('profile-modal-done') as HTMLButtonElement | null
+const badgesLabel = document.getElementById('badges-label')!
+const badgesEl = document.getElementById('badges')!
+const badgeInput = document.getElementById('badge-input') as HTMLInputElement
+const tagFieldEl = document.getElementById('tag-field')
+const tagMenuEl = document.getElementById('tag-menu')
+const tagSelectEl = document.getElementById('tag-select')
+
+const PRESET_BADGE_MESSAGES: Record<string, string> = {
+  'job-interview': 'badgeJobInterview',
+  javascript: 'badgeJavascript',
+  typescript: 'badgeTypescript',
+  react: 'badgeReact',
+  frontend: 'badgeFrontend',
+  backend: 'badgeBackend',
+  'system-design': 'badgeSystemDesign',
+  'code-review': 'badgeCodeReview',
+  'one-on-one': 'badgeOneOnOne',
+  standup: 'badgeStandup',
+}
+
+const PROFILE_QUESTION_MESSAGES: Record<ProfileQuestionId, string> = {
+  name: 'profileQName',
+  role: 'profileQRole',
+  experience: 'profileQExperience',
+  stack: 'profileQStack',
+  goal: 'profileQGoal',
+  languages: 'profileQLanguages',
+  notes: 'profileQNotes',
+}
 
 const WAVE_POINTS = 48
 const waveDisplay = new Float32Array(WAVE_POINTS).fill(0.1)
@@ -60,6 +107,21 @@ let settings: LlmSettings = {
   provider: 'openai',
   keys: { openai: '', groq: '', gemini: '' },
 }
+let meetingProfile: MeetingProfile = {
+  profile: '',
+  answers: {},
+  profileCustom: false,
+  badges: [],
+  customBadges: [],
+}
+let profileSaveTimer = 0
+let hideSidebarCaptions = true
+let overlayPlaques = 0
+let translateDirection: TranslateDirection = 'en-ru'
+let overlayKeepAlive = 0
+let lastOverlayWakeAt = 0
+let tagMenuOpen = false
+let tagHighlight = 0
 let whisperBusy = false
 let translateBusy = false
 let extractBusy = false
@@ -102,6 +164,38 @@ document.title = chrome.i18n.getMessage('extName')
 document.getElementById('ext-name')!.textContent = chrome.i18n.getMessage('extName')
 document.getElementById('api-key-label')!.textContent = chrome.i18n.getMessage('apiKeyLabel')
 document.getElementById('provider-label')!.textContent = chrome.i18n.getMessage('providerLabel')
+if (profileLabel) {
+  profileLabel.textContent = chrome.i18n.getMessage('profileLabel')
+}
+if (profileModalTitle) {
+  profileModalTitle.textContent = chrome.i18n.getMessage('profileLabel')
+}
+if (profileSummaryLabel) {
+  profileSummaryLabel.textContent = chrome.i18n.getMessage('profileSummaryLabel')
+}
+if (profileReset) {
+  profileReset.textContent = chrome.i18n.getMessage('profileReset')
+}
+if (profileModalDone) {
+  profileModalDone.textContent = chrome.i18n.getMessage('profileDone')
+}
+if (profileModalClose) {
+  profileModalClose.setAttribute('aria-label', chrome.i18n.getMessage('overlayClose'))
+}
+if (profileEl) {
+  profileEl.placeholder = chrome.i18n.getMessage('profilePlaceholder')
+}
+paintProfileQuestions()
+paintProfilePreview()
+if (badgesLabel) {
+  badgesLabel.textContent = chrome.i18n.getMessage('badgesLabel')
+}
+if (badgeInput) {
+  badgeInput.placeholder = chrome.i18n.getMessage('badgeAddPlaceholder')
+}
+if (badgesEl) {
+  paintBadges()
+}
 statusEl.textContent = chrome.i18n.getMessage('statusStandby')
 statusEl.title = statusEl.textContent
 writeHint(chrome.i18n.getMessage('micIdleHint'))
@@ -111,9 +205,6 @@ labelButton(clearTranslation, 'clearTranslation')
 setSourceState(micToggle, false)
 setSourceState(tabToggle, false)
 
-let hideSidebarCaptions = true
-let overlayPlaques = 0
-let translateDirection: TranslateDirection = 'en-ru'
 syncLayout()
 syncCaptionsButton()
 syncDirectionUi()
@@ -159,6 +250,12 @@ void loadLlmSettings().then((value) => {
   settings = value
   providerSelect.value = settings.provider
   syncProviderUi()
+})
+
+void loadMeetingProfile().then((value) => {
+  meetingProfile = value
+  fillProfileUi()
+  paintBadges()
 })
 
 micToggle.addEventListener('click', () => {
@@ -229,6 +326,67 @@ providerSelect.addEventListener('change', () => {
   syncProviderUi()
 })
 
+if (profileEl) {
+  profileEl.addEventListener('input', () => {
+    meetingProfile.profile = profileEl.value.slice(0, 4000)
+    meetingProfile.profileCustom = true
+    syncProfileReset()
+    window.clearTimeout(profileSaveTimer)
+    profileSaveTimer = window.setTimeout(() => {
+      void saveMeetingProfile(meetingProfile)
+      paintProfilePreview()
+    }, 250)
+  })
+}
+profileReset?.addEventListener('click', () => {
+  meetingProfile.profileCustom = false
+  meetingProfile.profile = compiledProfile()
+  fillProfileUi()
+  persistProfile()
+})
+profileOpen?.addEventListener('click', () => {
+  openProfileModal()
+})
+profileModalClose?.addEventListener('click', () => {
+  closeProfileModal()
+})
+profileModalDone?.addEventListener('click', () => {
+  closeProfileModal()
+})
+profileModal?.addEventListener('click', (event) => {
+  if (event.target === profileModal) {
+    closeProfileModal()
+  }
+})
+profileModal?.addEventListener('close', () => {
+  persistProfile()
+  paintProfilePreview()
+})
+
+if (badgeInput) {
+  badgeInput.addEventListener('input', () => {
+    tagHighlight = 0
+    openTagMenu()
+  })
+  badgeInput.addEventListener('focus', () => {
+    openTagMenu()
+  })
+  badgeInput.addEventListener('keydown', onTagKeydown)
+}
+tagFieldEl?.addEventListener('click', () => {
+  badgeInput?.focus()
+  openTagMenu()
+})
+tagMenuEl?.addEventListener('mousedown', (event) => {
+  event.preventDefault()
+})
+document.addEventListener('mousedown', (event) => {
+  if (!tagSelectEl || tagSelectEl.contains(event.target as Node)) {
+    return
+  }
+  closeTagMenu()
+})
+
 chrome.runtime.onMessage.addListener(
   (message: {
     type?: string
@@ -264,6 +422,7 @@ chrome.runtime.onMessage.addListener(
 
 window.addEventListener('unload', () => {
   stopOverlayKeepAlive()
+  void saveMeetingProfile(meetingProfile)
   void mic.stop()
   void tab.stop()
   void sendOverlay({ type: MessageType.DisableOverlay })
@@ -838,6 +997,10 @@ async function answerOverlayQuestion(id: string): Promise<void> {
       currentKey(),
       item.text,
       meetingBuffer.join('\n'),
+      {
+        profile: speakerProfile(),
+        badges: meetingProfile.badges,
+      },
     )
     item.answerEn = pair.en
     item.answerRu = pair.ru
@@ -927,9 +1090,6 @@ async function openCaptionWindow(): Promise<void> {
     )
   }
 }
-
-let overlayKeepAlive = 0
-let lastOverlayWakeAt = 0
 
 function wakeOverlayIfIdle(): void {
   if (Date.now() - lastOverlayWakeAt < 8000) {
@@ -1071,6 +1231,316 @@ function syncProviderUi(): void {
   apiKeyLabel.textContent = chrome.i18n.getMessage(`apiKeyLabel${suffix}`)
   apiKeyHint.textContent = chrome.i18n.getMessage(`apiKeyHint${suffix}`)
   apiKeyHint.title = apiKeyHint.textContent
+}
+
+function profileQuestionLabel(id: ProfileQuestionId): string {
+  return chrome.i18n.getMessage(PROFILE_QUESTION_MESSAGES[id]) || id
+}
+
+function compiledProfile(): string {
+  return compileProfile(meetingProfile.answers, profileQuestionLabel)
+}
+
+function speakerProfile(): string {
+  return meetingProfile.profile.trim() || compiledProfile()
+}
+
+function profilePreviewText(): string {
+  const parts = [meetingProfile.answers.name, meetingProfile.answers.role, meetingProfile.answers.stack]
+    .map((item) => item?.trim())
+    .filter(Boolean)
+  if (parts.length > 0) {
+    return parts.join(' · ')
+  }
+  const profile = speakerProfile().split('\n')[0]?.trim() ?? ''
+  return profile
+}
+
+function paintProfilePreview(): void {
+  if (!profilePreview) {
+    return
+  }
+  const text = profilePreviewText()
+  profilePreview.textContent = text || chrome.i18n.getMessage('profileEmpty')
+  profilePreview.classList.toggle('filled', Boolean(text))
+  profileOpen?.setAttribute('aria-label', chrome.i18n.getMessage(text ? 'profileLabel' : 'profileEmpty'))
+}
+
+function openProfileModal(): void {
+  fillProfileUi()
+  if (profileModal && typeof profileModal.showModal === 'function' && !profileModal.open) {
+    profileModal.showModal()
+  }
+  const firstEmpty = profileQuestionsEl?.querySelector(
+    'input:not([value]), input[value=""]',
+  ) as HTMLInputElement | null
+  const focusEl = firstEmpty && !firstEmpty.value ? firstEmpty : profileQuestionsEl?.querySelector('input')
+  ;(focusEl as HTMLInputElement | null)?.focus()
+}
+
+function closeProfileModal(): void {
+  if (profileModal?.open) {
+    profileModal.close()
+  }
+  persistProfile()
+  paintProfilePreview()
+}
+
+function syncProfileReset(): void {
+  if (!profileReset) {
+    return
+  }
+  profileReset.hidden = !meetingProfile.profileCustom
+}
+
+function fillProfileUi(): void {
+  if (profileEl) {
+    profileEl.value = meetingProfile.profile
+  }
+  if (!profileQuestionsEl) {
+    syncProfileReset()
+    paintProfilePreview()
+    return
+  }
+  for (const id of PROFILE_QUESTIONS) {
+    const input = profileQuestionsEl.querySelector(`[data-profile-q="${id}"]`) as HTMLInputElement | null
+    if (input) {
+      input.value = meetingProfile.answers[id] ?? ''
+    }
+  }
+  syncProfileReset()
+  paintProfilePreview()
+}
+
+function onProfileAnswer(id: ProfileQuestionId, value: string): void {
+  const text = value.replace(/\s+/g, ' ').trim().slice(0, 280)
+  if (text) {
+    meetingProfile.answers[id] = text
+  } else {
+    delete meetingProfile.answers[id]
+  }
+  if (!meetingProfile.profileCustom) {
+    meetingProfile.profile = compiledProfile()
+    if (profileEl) {
+      profileEl.value = meetingProfile.profile
+    }
+  }
+  persistProfile()
+  paintProfilePreview()
+}
+
+function paintProfileQuestions(): void {
+  if (!profileQuestionsEl) {
+    return
+  }
+  profileQuestionsEl.replaceChildren()
+  for (const id of PROFILE_QUESTIONS) {
+    const row = document.createElement('label')
+    row.className = 'profile-q'
+    const title = document.createElement('span')
+    title.textContent = profileQuestionLabel(id)
+    const input = document.createElement('input')
+    input.type = 'text'
+    input.maxLength = 280
+    input.autocomplete = 'off'
+    input.dataset.profileQ = id
+    input.value = meetingProfile.answers[id] ?? ''
+    input.addEventListener('input', () => onProfileAnswer(id, input.value))
+    row.append(title, input)
+    profileQuestionsEl.append(row)
+  }
+}
+
+function badgeLabel(id: string): string {
+  const key = PRESET_BADGE_MESSAGES[id]
+  return (key && chrome.i18n.getMessage(key)) || id.replace(/-/g, ' ')
+}
+
+function isBadgeOn(id: string): boolean {
+  return meetingProfile.badges.some((badge) => badge.toLowerCase() === id.toLowerCase())
+}
+
+function persistProfile(): void {
+  void saveMeetingProfile(meetingProfile)
+}
+
+function tagQuery(): string {
+  return badgeInput?.value.replace(/\s+/g, ' ').trim() ?? ''
+}
+
+function catalogTags(): string[] {
+  const seen = new Set<string>()
+  const list: string[] = []
+  for (const id of [...PRESET_BADGES, ...meetingProfile.customBadges]) {
+    const key = id.toLowerCase()
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    list.push(id)
+  }
+  return list
+}
+
+function tagChoices(): Array<{ id: string; create: boolean }> {
+  const query = tagQuery().toLowerCase()
+  const available = catalogTags().filter((id) => !isBadgeOn(id))
+  const filtered = query
+    ? available.filter((id) => badgeLabel(id).toLowerCase().includes(query) || id.toLowerCase().includes(query))
+    : available
+  const choices = filtered.map((id) => ({ id, create: false }))
+  if (query && !catalogTags().some((id) => badgeLabel(id).toLowerCase() === query || id.toLowerCase() === query)) {
+    choices.push({ id: tagQuery().slice(0, 40), create: true })
+  }
+  return choices
+}
+
+function openTagMenu(): void {
+  tagMenuOpen = true
+  paintTagMenu()
+}
+
+function closeTagMenu(): void {
+  tagMenuOpen = false
+  tagHighlight = 0
+  if (tagMenuEl) {
+    tagMenuEl.hidden = true
+  }
+}
+
+function onTagKeydown(event: KeyboardEvent): void {
+  const choices = tagChoices()
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    openTagMenu()
+    tagHighlight = choices.length === 0 ? 0 : (tagHighlight + 1) % choices.length
+    paintTagMenu()
+    return
+  }
+  if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    openTagMenu()
+    tagHighlight = choices.length === 0 ? 0 : (tagHighlight - 1 + choices.length) % choices.length
+    paintTagMenu()
+    return
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closeTagMenu()
+    badgeInput.blur()
+    return
+  }
+  if (event.key === 'Backspace' && !badgeInput.value && meetingProfile.badges.length > 0) {
+    event.preventDefault()
+    removeBadge(meetingProfile.badges[meetingProfile.badges.length - 1])
+    return
+  }
+  if (event.key !== 'Enter') {
+    return
+  }
+  event.preventDefault()
+  const current = choices[tagHighlight]
+  if (current) {
+    addCustomBadge(current.id)
+  } else {
+    addCustomBadge(badgeInput.value)
+  }
+}
+
+function addCustomBadge(raw: string): void {
+  const badge = raw.replace(/\s+/g, ' ').trim().slice(0, 40)
+  if (!badge) {
+    return
+  }
+  const preset = PRESET_BADGES.find(
+    (id) => badgeLabel(id).toLowerCase() === badge.toLowerCase() || id.toLowerCase() === badge.toLowerCase(),
+  )
+  const id = preset ?? badge
+  if (!preset && !meetingProfile.customBadges.some((item) => item.toLowerCase() === id.toLowerCase())) {
+    meetingProfile.customBadges = [...meetingProfile.customBadges, id]
+  }
+  if (!isBadgeOn(id) && meetingProfile.badges.length < 16) {
+    meetingProfile.badges = [...meetingProfile.badges, id]
+  }
+  if (badgeInput) {
+    badgeInput.value = ''
+  }
+  tagHighlight = 0
+  persistProfile()
+  paintBadges()
+  openTagMenu()
+}
+
+function removeBadge(id: string): void {
+  meetingProfile.badges = meetingProfile.badges.filter((badge) => badge.toLowerCase() !== id.toLowerCase())
+  persistProfile()
+  paintBadges()
+  if (tagMenuOpen) {
+    paintTagMenu()
+  }
+}
+
+function paintBadges(): void {
+  if (!badgesEl) {
+    return
+  }
+  badgesEl.replaceChildren()
+  for (const id of meetingProfile.badges) {
+    badgesEl.append(makeTagChip(id))
+  }
+  if (tagMenuOpen) {
+    paintTagMenu()
+  }
+}
+
+function makeTagChip(id: string): HTMLSpanElement {
+  const chip = document.createElement('span')
+  chip.className = 'tag-chip'
+  const label = document.createElement('span')
+  label.textContent = badgeLabel(id)
+  const drop = document.createElement('button')
+  drop.type = 'button'
+  drop.className = 'drop'
+  drop.textContent = '×'
+  drop.setAttribute('aria-label', chrome.i18n.getMessage('overlayClose'))
+  drop.addEventListener('click', (event) => {
+    event.stopPropagation()
+    removeBadge(id)
+  })
+  chip.append(label, drop)
+  return chip
+}
+
+function paintTagMenu(): void {
+  if (!tagMenuEl) {
+    return
+  }
+  const choices = tagChoices()
+  tagMenuEl.replaceChildren()
+  if (choices.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'tag-empty'
+    empty.textContent = chrome.i18n.getMessage('badgeEmpty')
+    tagMenuEl.append(empty)
+  } else {
+    if (tagHighlight >= choices.length) {
+      tagHighlight = 0
+    }
+    choices.forEach((choice, index) => {
+      const option = document.createElement('button')
+      option.type = 'button'
+      option.className = `tag-option${choice.create ? ' create' : ''}${index === tagHighlight ? ' active' : ''}`
+      option.textContent = choice.create
+        ? chrome.i18n.getMessage('badgeCreate', [choice.id]) || `Add “${choice.id}”`
+        : badgeLabel(choice.id)
+      option.addEventListener('click', () => {
+        addCustomBadge(choice.id)
+        badgeInput?.focus()
+      })
+      tagMenuEl.append(option)
+    })
+  }
+  tagMenuEl.hidden = !tagMenuOpen
 }
 
 function writeHint(text: string, isError = false): void {
