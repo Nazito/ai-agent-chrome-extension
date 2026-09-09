@@ -1,5 +1,6 @@
 import { MicrophoneSession, requestMicrophone } from './mic.js'
 import {
+  analyzeScreenTask,
   answerQuestion,
   extractQuestions,
   isCutQuestion,
@@ -37,6 +38,7 @@ const hintEl = document.getElementById('starter-body')!
 const micToggle = document.getElementById('mic-toggle') as HTMLButtonElement
 const tabToggle = document.getElementById('tab-toggle') as HTMLButtonElement
 const captionsToggle = document.getElementById('captions-toggle') as HTMLButtonElement
+const screenToggle = document.getElementById('screen-toggle') as HTMLButtonElement
 const sidebarCaptionsToggle = document.getElementById(
   'sidebar-captions-toggle',
 ) as HTMLButtonElement
@@ -126,6 +128,9 @@ let whisperBusy = false
 let translateBusy = false
 let extractBusy = false
 let extractQueued = false
+let screenScanBusy = false
+let scanRegionOpen = false
+let scanCommandBusy = false
 let hintLockUntil = 0
 let silentSince = 0
 let sidePanelClosing = false
@@ -143,6 +148,7 @@ const visibleQuestions: Array<{
   textRu: string
   answerEn: string
   answerRu: string
+  code: string
 }> = []
 let questionSeq = 0
 const MEETING_BUFFER_MAX = 15
@@ -200,6 +206,7 @@ statusEl.textContent = chrome.i18n.getMessage('statusStandby')
 statusEl.title = statusEl.textContent
 writeHint(chrome.i18n.getMessage('micIdleHint'))
 labelButton(captionsToggle, 'captionsOpen')
+labelButton(screenToggle, 'screenScan')
 labelButton(clearOriginal, 'clearOriginal')
 labelButton(clearTranslation, 'clearTranslation')
 setSourceState(micToggle, false)
@@ -300,6 +307,10 @@ captionsToggle.addEventListener('click', () => {
     })
 })
 
+screenToggle.addEventListener('click', () => {
+  void toggleScanRegion()
+})
+
 sidebarCaptionsToggle.addEventListener('click', () => {
   hideSidebarCaptions = !hideSidebarCaptions
   void chrome.storage.local.set({ sidebarCaptionsHidden: hideSidebarCaptions })
@@ -393,6 +404,12 @@ chrome.runtime.onMessage.addListener(
     count?: number
     target?: 'original' | 'translation'
     id?: string
+    left?: number
+    top?: number
+    width?: number
+    height?: number
+    vw?: number
+    vh?: number
   }) => {
     if (message.type === MessageType.OverlayPlaqueCount && typeof message.count === 'number') {
       setOverlayPlaques(message.count)
@@ -416,6 +433,15 @@ chrome.runtime.onMessage.addListener(
     }
     if (message.type === MessageType.RequestOverlayAnswer && message.id) {
       void answerOverlayQuestion(message.id)
+    }
+    if (message.type === MessageType.ScanRegionCancel) {
+      setScanRegionOpen(false)
+    }
+    if (message.type === MessageType.ScanRegionCapture) {
+      const region = readScanRect(message)
+      if (region) {
+        void scanVisibleTab(region)
+      }
     }
   },
 )
@@ -723,6 +749,10 @@ function sendOverlay(
         question: string
         questionEn?: string
         questionRu?: string
+        answer?: string
+        answerEn?: string
+        answerRu?: string
+        code?: string
       }
     | { type: typeof MessageType.DismissOverlayQuestion; id: string }
     | { type: typeof MessageType.RequestOverlayAnswer; id: string }
@@ -732,17 +762,28 @@ function sendOverlay(
         answer?: string
         answerEn?: string
         answerRu?: string
+        code?: string
         error?: string
       }
-    | { type: typeof MessageType.ClearOverlayQuestions },
+    | { type: typeof MessageType.ClearOverlayQuestions }
+    | { type: typeof MessageType.ShowScanRegion }
+    | { type: typeof MessageType.HideScanRegion }
+    | { type: typeof MessageType.ShowScanSpinner }
+    | { type: typeof MessageType.RequestScanCapture },
 ): Promise<void> {
+  const waitMs =
+    message.type === MessageType.ShowScanRegion ||
+    message.type === MessageType.HideScanRegion ||
+    message.type === MessageType.ShowScanSpinner
+      ? 4500
+      : 800
   return Promise.race([
     chrome.runtime
       .sendMessage(message)
       .then(() => undefined)
       .catch(() => undefined),
     new Promise<void>((resolve) => {
-      window.setTimeout(resolve, 800)
+      window.setTimeout(resolve, waitMs)
     }),
   ])
 }
@@ -802,6 +843,10 @@ function sendQuestion(item: (typeof visibleQuestions)[number]): void {
     question: item.text,
     questionEn: item.textEn || undefined,
     questionRu: item.textRu || undefined,
+    answer: item.answerRu || item.answerEn || undefined,
+    answerEn: item.answerEn || undefined,
+    answerRu: item.answerRu || undefined,
+    code: item.code || undefined,
   })
 }
 
@@ -812,12 +857,14 @@ function sendAnswer(item: (typeof visibleQuestions)[number], error?: string): vo
     answer: item.answerRu || item.answerEn || undefined,
     answerEn: item.answerEn || undefined,
     answerRu: item.answerRu || undefined,
+    code: item.code || undefined,
     error,
   })
 }
 
 function hideOverlaysFromSidePanel(): void {
   stopOverlayKeepAlive()
+  setScanRegionOpen(false)
   void chrome.storage.local.set({ sidePanelOpen: false })
   void sendOverlay({ type: MessageType.DisableOverlay })
 }
@@ -887,6 +934,7 @@ function pushVisibleQuestion(text: string): void {
     existing.textRu = russian ? text : ''
     existing.answerEn = ''
     existing.answerRu = ''
+    existing.code = ''
     sendQuestion(existing)
     void fillQuestionTranslation(existing)
     return
@@ -900,6 +948,7 @@ function pushVisibleQuestion(text: string): void {
     textRu: russian ? text : '',
     answerEn: '',
     answerRu: '',
+    code: '',
   }
   visibleQuestions.push(item)
   while (visibleQuestions.length > VISIBLE_QUESTIONS_MAX) {
@@ -1045,6 +1094,306 @@ function formatAnswerIssue(kind: ApiFailureKind | 'empty', error?: unknown): str
   return template
     .replaceAll('{provider}', providerTitle())
     .replaceAll('{detail}', error instanceof Error ? error.message : '')
+}
+
+async function toggleScanRegion(): Promise<void> {
+  persistApiKey()
+  if (!currentKey()) {
+    setHint(chrome.i18n.getMessage('tabNeedsKey'), 8000)
+    return
+  }
+  if (screenScanBusy || scanCommandBusy) {
+    return
+  }
+  if (scanRegionOpen) {
+    scanCommandBusy = true
+    paintScanButton()
+    try {
+      await sendScanCommand(MessageType.HideScanRegion)
+      setScanRegionOpen(false)
+    } catch {
+      setScanRegionOpen(false)
+    } finally {
+      scanCommandBusy = false
+      paintScanButton()
+    }
+    return
+  }
+  scanCommandBusy = true
+  paintScanButton()
+  try {
+    await requestHostPermission()
+    await sendScanCommand(MessageType.ShowScanRegion)
+    setScanRegionOpen(true)
+    setHint(chrome.i18n.getMessage('screenRegionHint'), 16000)
+  } catch (error) {
+    setScanRegionOpen(false)
+    reportOverlayIssue(error)
+  } finally {
+    scanCommandBusy = false
+    paintScanButton()
+  }
+}
+
+async function sendScanCommand(
+  type:
+    | typeof MessageType.ShowScanRegion
+    | typeof MessageType.HideScanRegion
+    | typeof MessageType.ShowScanSpinner,
+): Promise<void> {
+  const response = (await chrome.runtime.sendMessage({ type })) as
+    | { ok: true }
+    | { ok: false; error?: string; code?: string }
+    | undefined
+  if (!response || response.ok === false) {
+    throw new NamedError(
+      response && response.ok === false ? response.code ?? 'overlay-host' : 'overlay-host',
+      (response && response.ok === false ? response.error : undefined) ||
+        chrome.i18n.getMessage('screenError'),
+    )
+  }
+}
+
+async function scanVisibleTab(region: ScanRect): Promise<void> {
+  if (screenScanBusy) {
+    return
+  }
+  persistApiKey()
+  if (!currentKey()) {
+    setHint(chrome.i18n.getMessage('tabNeedsKey'), 8000)
+    void sendScanCommand(MessageType.ShowScanRegion).catch(() => undefined)
+    return
+  }
+  screenScanBusy = true
+  paintScanButton()
+  statusEl.classList.remove('error')
+  statusEl.textContent = chrome.i18n.getMessage('screenScanning')
+  writeHint(chrome.i18n.getMessage('screenScanning'))
+  try {
+    await new Promise((resolve) => window.setTimeout(resolve, 50))
+    const full = await captureTabScreenshot()
+    void sendScanCommand(MessageType.ShowScanSpinner).catch(() => undefined)
+    const image = await cropScreenshot(full, region).catch(() => full)
+    const result = await analyzeScreenTask(settings.provider, currentKey(), image, {
+      profile: speakerProfile(),
+      badges: meetingProfile.badges,
+    })
+    if (!result.hasTask) {
+      setHint(chrome.i18n.getMessage('screenNoTask'), 10000)
+      return
+    }
+    try {
+      await enableOnScreenCaptions()
+    } catch {
+      setHint(screenTaskPreview(result), 16000)
+      return
+    }
+    pushScreenTask(result)
+    setHint(chrome.i18n.getMessage('screenFound'), 12000)
+  } catch (error) {
+    if (error instanceof NamedError && error.code.startsWith('overlay')) {
+      reportOverlayIssue(error)
+    } else {
+      writeHint(formatScreenIssue(classifyApiError(error), error), true)
+      hintLockUntil = Date.now() + 12000
+    }
+  } finally {
+    screenScanBusy = false
+    paintScanButton()
+    if (scanRegionOpen) {
+      void sendScanCommand(MessageType.ShowScanRegion).catch(() => undefined)
+    } else {
+      void sendScanCommand(MessageType.HideScanRegion).catch(() => undefined)
+    }
+    restoreListenStatus()
+  }
+}
+
+type ScanRect = {
+  left: number
+  top: number
+  width: number
+  height: number
+  vw: number
+  vh: number
+}
+
+function readScanRect(message: {
+  left?: number
+  top?: number
+  width?: number
+  height?: number
+  vw?: number
+  vh?: number
+}): ScanRect | null {
+  if (
+    typeof message.left !== 'number' ||
+    typeof message.top !== 'number' ||
+    typeof message.width !== 'number' ||
+    typeof message.height !== 'number' ||
+    typeof message.vw !== 'number' ||
+    typeof message.vh !== 'number' ||
+    !Number.isFinite(message.left) ||
+    !Number.isFinite(message.top) ||
+    !Number.isFinite(message.width) ||
+    !Number.isFinite(message.height) ||
+    !Number.isFinite(message.vw) ||
+    !Number.isFinite(message.vh) ||
+    message.width < 8 ||
+    message.height < 8 ||
+    message.vw < 8 ||
+    message.vh < 8
+  ) {
+    return null
+  }
+  return {
+    left: message.left,
+    top: message.top,
+    width: message.width,
+    height: message.height,
+    vw: message.vw,
+    vh: message.vh,
+  }
+}
+
+async function cropScreenshot(dataUrl: string, region: ScanRect): Promise<string> {
+  const image = await loadScreenshot(dataUrl)
+  const scaleX = image.width / Math.max(1, region.vw)
+  const scaleY = image.height / Math.max(1, region.vh)
+  const sx = Math.max(0, region.left * scaleX)
+  const sy = Math.max(0, region.top * scaleY)
+  const sw = Math.min(image.width - sx, Math.max(8, region.width * scaleX))
+  const sh = Math.min(image.height - sy, Math.max(8, region.height * scaleY))
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.round(sw)
+  canvas.height = Math.round(sh)
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    return dataUrl
+  }
+  ctx.drawImage(image, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height)
+  return canvas.toDataURL('image/jpeg', 0.82)
+}
+
+function loadScreenshot(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error(chrome.i18n.getMessage('screenError')))
+    image.src = src
+  })
+}
+
+function setScanRegionOpen(open: boolean): void {
+  scanRegionOpen = open
+  paintScanButton()
+}
+
+function paintScanButton(): void {
+  const working = screenScanBusy || scanCommandBusy
+  screenToggle.classList.toggle('active', scanRegionOpen && !screenScanBusy)
+  screenToggle.classList.toggle('busy', working)
+  screenToggle.disabled = working
+  screenToggle.setAttribute('aria-pressed', String(scanRegionOpen))
+  labelButton(screenToggle, scanRegionOpen ? 'screenScanHide' : 'screenScan')
+}
+
+async function captureTabScreenshot(): Promise<string> {
+  const response = (await chrome.runtime.sendMessage({
+    type: MessageType.CaptureTabScreenshot,
+  })) as { ok: true; image?: string } | { ok: false; error?: string; code?: string } | undefined
+  if (!response || response.ok === false || !response.image) {
+    throw new NamedError(
+      response && response.ok === false ? response.code ?? 'overlay-host' : 'overlay-host',
+      (response && response.ok === false ? response.error : undefined) ||
+        chrome.i18n.getMessage('screenError'),
+    )
+  }
+  return response.image
+}
+
+function pushScreenTask(result: {
+  title: string
+  task: string
+  answerEn: string
+  answerRu: string
+  code: string
+}): (typeof visibleQuestions)[number] {
+  const text =
+    [result.title.trim(), result.task.trim()].filter(Boolean).join(' — ').slice(0, 280) ||
+    chrome.i18n.getMessage('screenScan')
+  const display = text.length >= 8 ? text : `${text} · task`
+  const russian = looksRussian(display)
+  const item = {
+    id: `q-${++questionSeq}`,
+    text: display,
+    key: `screen-${questionSeq}-${normalizeQuestion(display)}`,
+    textEn: russian ? '' : display,
+    textRu: russian ? display : '',
+    answerEn: result.answerEn,
+    answerRu: result.answerRu,
+    code: result.code,
+  }
+  visibleQuestions.push(item)
+  while (visibleQuestions.length > VISIBLE_QUESTIONS_MAX) {
+    const dropped = visibleQuestions.shift()
+    if (dropped) {
+      void sendOverlay({ type: MessageType.DismissOverlayQuestion, id: dropped.id })
+    }
+  }
+  sendQuestion(item)
+  if (!item.textEn || !item.textRu) {
+    void fillQuestionTranslation(item)
+  }
+  return item
+}
+
+function screenTaskPreview(result: {
+  title: string
+  answerEn: string
+  answerRu: string
+  code: string
+}): string {
+  return [result.title, result.answerRu || result.answerEn, result.code]
+    .filter(Boolean)
+    .join('\n')
+    .slice(0, 500)
+}
+
+function formatScreenIssue(kind: ApiFailureKind, error?: unknown): string {
+  const suffix =
+    kind === 'badKey'
+      ? 'BadKey'
+      : kind === 'quota'
+        ? 'Quota'
+        : kind === 'rateLimit'
+          ? 'RateLimit'
+          : kind === 'modelGone'
+            ? 'ModelGone'
+            : kind === 'network'
+              ? 'Network'
+              : 'Unknown'
+  const template =
+    chrome.i18n.getMessage(`issueScreen${suffix}`) || chrome.i18n.getMessage('issueScreenUnknown')
+  return template
+    .replaceAll('{provider}', providerTitle())
+    .replaceAll('{detail}', error instanceof Error ? error.message : '')
+}
+
+function restoreListenStatus(): void {
+  if (liveIssue) {
+    paintLiveIssue()
+    return
+  }
+  statusEl.classList.toggle('error', false)
+  if (tab.active) {
+    statusEl.textContent = chrome.i18n.getMessage('statusTabListening')
+  } else if (mic.active) {
+    statusEl.textContent = chrome.i18n.getMessage('statusListening')
+  } else {
+    statusEl.textContent = chrome.i18n.getMessage('statusStandby')
+  }
+  statusEl.title = statusEl.textContent ?? ''
 }
 
 function clearCaptionBoxes(target?: 'original' | 'translation'): void {

@@ -27,6 +27,13 @@ export const MessageType = {
   CloseOverlayPlaque: 'CLOSE_OVERLAY_PLAQUE',
   SidePanelPresence: 'SIDE_PANEL_PRESENCE',
   GetTabStreamId: 'GET_TAB_STREAM_ID',
+  CaptureTabScreenshot: 'CAPTURE_TAB_SCREENSHOT',
+  ShowScanRegion: 'SHOW_SCAN_REGION',
+  HideScanRegion: 'HIDE_SCAN_REGION',
+  ShowScanSpinner: 'SHOW_SCAN_SPINNER',
+  RequestScanCapture: 'REQUEST_SCAN_CAPTURE',
+  ScanRegionCapture: 'SCAN_REGION_CAPTURE',
+  ScanRegionCancel: 'SCAN_REGION_CANCEL',
 } as const
 
 export type CaptureSource = 'tab' | 'desktop'
@@ -57,7 +64,17 @@ export type ExtensionMessage =
   | { type: typeof MessageType.OverlayPlaqueCount; count: number }
   | { type: typeof MessageType.RequestPlaqueCount }
   | { type: typeof MessageType.SetTranslateDirection; direction: 'en-ru' | 'ru-en' }
-  | { type: typeof MessageType.ShowOverlayQuestion; id: string; question: string; questionEn?: string; questionRu?: string }
+  | {
+      type: typeof MessageType.ShowOverlayQuestion
+      id: string
+      question: string
+      questionEn?: string
+      questionRu?: string
+      answer?: string
+      answerEn?: string
+      answerRu?: string
+      code?: string
+    }
   | { type: typeof MessageType.DismissOverlayQuestion; id: string }
   | { type: typeof MessageType.RequestOverlayAnswer; id: string }
   | {
@@ -66,13 +83,29 @@ export type ExtensionMessage =
       answer?: string
       answerEn?: string
       answerRu?: string
+      code?: string
       error?: string
     }
   | { type: typeof MessageType.ClearOverlayQuestions }
   | { type: typeof MessageType.CloseOverlayPlaque; target: 'original' | 'translation' }
   | { type: typeof MessageType.SidePanelPresence; visible: boolean }
   | { type: typeof MessageType.GetTabStreamId; tabId: number }
+  | { type: typeof MessageType.CaptureTabScreenshot; tabId?: number }
+  | { type: typeof MessageType.ShowScanRegion }
+  | { type: typeof MessageType.HideScanRegion }
+  | { type: typeof MessageType.ShowScanSpinner }
+  | { type: typeof MessageType.RequestScanCapture }
+  | {
+      type: typeof MessageType.ScanRegionCapture
+      left: number
+      top: number
+      width: number
+      height: number
+      vw: number
+      vh: number
+    }
+  | { type: typeof MessageType.ScanRegionCancel }
 
 export type CommandResponse =
-  | { ok: true; streamId?: string }
+  | { ok: true; streamId?: string; image?: string }
   | { ok: false; error?: string; code?: string }
