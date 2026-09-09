@@ -315,6 +315,44 @@ button:disabled {
   display: none;
 }
 
+#screen-toggle.busy {
+  opacity: 1;
+}
+
+#screen-toggle.busy svg {
+  display: none;
+}
+
+#screen-toggle .btn-spin {
+  display: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: jarvis-btn-spin 0.7s linear infinite;
+}
+
+#screen-toggle.busy .btn-spin {
+  display: block;
+}
+
+@keyframes jarvis-btn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #screen-toggle .btn-spin {
+    animation-duration: 1.4s;
+  }
+}
+
+#screen-toggle.active {
+  background: rgba(var(--accent-rgb), 0.18);
+}
+
 #sidebar-captions-toggle.active {
   background: rgba(var(--gold-rgb), 0.16);
   color: var(--gold);

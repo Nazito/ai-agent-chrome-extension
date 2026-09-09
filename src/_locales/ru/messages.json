@@ -224,6 +224,51 @@
   "captionsOpened": {
     "message": "На вкладке созвона две плашки: слева исходный язык, справа перевод. Их можно перетаскивать."
   },
+  "screenScan": {
+    "message": "Сканировать вкладку на задачу"
+  },
+  "screenScanning": {
+    "message": "Читаю выделенную область…"
+  },
+  "screenNoTask": {
+    "message": "В этой области нет задачи. Сдвиньте рамку и сканируйте ещё раз."
+  },
+  "screenFound": {
+    "message": "Задача на оверлее в плашке вопросов, с решением."
+  },
+  "screenError": {
+    "message": "Не удалось снять скриншот вкладки."
+  },
+  "screenRegion": {
+    "message": "Область скана"
+  },
+  "screenRegionAnalyze": {
+    "message": "Разобрать"
+  },
+  "screenRegionHint": {
+    "message": "Потяните рамку на задачу и измените размер, затем нажмите «Разобрать»."
+  },
+  "screenScanHide": {
+    "message": "Скрыть область скана"
+  },
+  "issueScreenBadKey": {
+    "message": "Не удалось разобрать экран: ключ {provider} не принят."
+  },
+  "issueScreenQuota": {
+    "message": "Не удалось разобрать экран: у {provider} закончилась квота."
+  },
+  "issueScreenRateLimit": {
+    "message": "Не удалось разобрать экран: {provider} временно ограничил запросы."
+  },
+  "issueScreenModelGone": {
+    "message": "Не удалось разобрать экран: у {provider} нет рабочей vision-модели."
+  },
+  "issueScreenNetwork": {
+    "message": "Не удалось разобрать экран: нет связи с {provider}."
+  },
+  "issueScreenUnknown": {
+    "message": "Не удалось разобрать экран: {provider} вернул ошибку. {detail}"
+  },
   "sidebarCaptionsHide": {
     "message": "Скрыть субтитры"
   },

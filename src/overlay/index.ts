@@ -9,18 +9,21 @@ if (!chrome?.i18n || typeof chrome.i18n.getMessage !== 'function') {
   return
 }
 const overlayWindow = window as Window & { __jarvisHud?: HudHandle; __jarvisHudRev?: number }
-const HUD_REV = 26
+const HUD_REV = 30
 const STYLE_ID = 'jarvis-hud-style'
 const HOST_IDS = {
   original: 'jarvis-plaque-original',
   translation: 'jarvis-plaque-translation',
   questions: 'jarvis-plaque-questions',
+  scan: 'jarvis-plaque-scan',
 } as const
 const PLAQUE_MIN_W = 220
 const PLAQUE_MIN_H = 128
+const SCAN_MIN_W = 160
+const SCAN_MIN_H = 120
 let sidePanelOpen = false
 let sidePanelWidth = 360
-const plaqueSizes: Record<string, { w: number; h: number }> = {}
+const plaqueSizes: Record<string, { w: number; h: number; x?: number; y?: number }> = {}
 let plaqueSaveTimer = 0
 
 void chrome.storage.local.get({ sidePanelOpen: false, sidePanelWidth: 360, plaqueSizes: {} }).then((stored) => {
@@ -71,7 +74,8 @@ function startOverlay(): HudHandle {
   pageStyle.textContent = `
     #${HOST_IDS.original},
     #${HOST_IDS.translation},
-    #${HOST_IDS.questions} {
+    #${HOST_IDS.questions},
+    #${HOST_IDS.scan} {
       all: initial;
       position: fixed !important;
       z-index: 2147483647 !important;
@@ -108,13 +112,44 @@ function startOverlay(): HudHandle {
       right: auto !important;
       bottom: auto !important;
       width: min(520px, calc(100vw - var(--jarvis-right, 16px) - 32px)) !important;
-      height: 200px !important;
+      height: 280px !important;
       transform: translateX(-50%) !important;
     }
     #${HOST_IDS.original}[data-open="1"],
     #${HOST_IDS.translation}[data-open="1"],
     #${HOST_IDS.questions}[data-open="1"] {
       display: block !important;
+    }
+    #${HOST_IDS.scan} {
+      left: 14% !important;
+      top: 16% !important;
+      right: auto !important;
+      bottom: auto !important;
+      width: min(720px, calc(100vw - var(--jarvis-right, 16px) - 80px)) !important;
+      height: min(480px, calc(100vh - 120px)) !important;
+      z-index: 2147483646 !important;
+      background: transparent !important;
+      border: 2px solid rgba(62, 220, 232, 0.9) !important;
+      border-radius: 12px !important;
+      box-shadow: 0 0 0 9999px rgba(18, 48, 58, 0.4) !important;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+      overflow: visible !important;
+    }
+    #${HOST_IDS.scan}[data-open="1"] {
+      display: block !important;
+    }
+    #${HOST_IDS.scan}[data-busy="1"] {
+      left: 50% !important;
+      top: 22% !important;
+      width: 64px !important;
+      height: 64px !important;
+      transform: translateX(-50%) !important;
+      border: 0 !important;
+      border-radius: 16px !important;
+      background: rgba(255, 255, 255, 0.92) !important;
+      box-shadow: 0 10px 28px rgba(18, 48, 58, 0.16) !important;
+      overflow: hidden !important;
     }
     @media (max-width: 900px) {
       #${HOST_IDS.original},
@@ -192,6 +227,37 @@ function startOverlay(): HudHandle {
       void chrome.runtime.sendMessage({ type: 'REQUEST_OVERLAY_ANSWER', id }).catch(() => undefined)
     },
   })
+  const scanPlaque = createScanPlaque({
+    id: HOST_IDS.scan,
+    title: chrome.i18n.getMessage('screenRegion') || 'Scan area',
+    analyzeLabel: chrome.i18n.getMessage('screenRegionAnalyze') || 'Analyze',
+    onAnalyze() {
+      captureScanRegion()
+    },
+    onClose() {
+      scanPlaque.setOpen(false)
+      void chrome.runtime.sendMessage({ type: 'SCAN_REGION_CANCEL' }).catch(() => undefined)
+    },
+  })
+
+  function captureScanRegion(): void {
+    const rect = scanPlaque.rect()
+    if (!rect) {
+      return
+    }
+    scanPlaque.setOpen(false)
+    void chrome.runtime
+      .sendMessage({
+        type: 'SCAN_REGION_CAPTURE',
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+        vw: window.innerWidth,
+        vh: window.innerHeight,
+      })
+      .catch(() => undefined)
+  }
 
   function applyDirection(next?: string): void {
     if (next === 'en-ru' || next === 'ru-en') {
@@ -230,6 +296,7 @@ function startOverlay(): HudHandle {
     originalPlaque.mount(root)
     translationPlaque.mount(root)
     questionsPlaque.mount(root)
+    scanPlaque.mount(root)
   }
 
   function hideHud(): void {
@@ -243,6 +310,11 @@ function startOverlay(): HudHandle {
     originalPlaque.clear()
     translationPlaque.clear()
     questionsPlaque.clear()
+    if (scanPlaque.isOpen()) {
+      void chrome.runtime.sendMessage({ type: 'SCAN_REGION_CANCEL' }).catch(() => undefined)
+    }
+    scanPlaque.setBusy(false)
+    scanPlaque.setOpen(false)
     render()
   }
 
@@ -259,6 +331,7 @@ function startOverlay(): HudHandle {
     answer?: string
     answerEn?: string
     answerRu?: string
+    code?: string
     error?: string
   }): void {
     if (message.type === 'ENABLE_OVERLAY') {
@@ -319,6 +392,15 @@ function startOverlay(): HudHandle {
         questionEn: message.questionEn,
         questionRu: message.questionRu,
       })
+      if (message.answer || message.answerEn || message.answerRu || message.code || message.error) {
+        questionsPlaque.setAnswer(message.id, {
+          answer: message.answer,
+          answerEn: message.answerEn,
+          answerRu: message.answerRu,
+          code: message.code,
+          error: message.error,
+        })
+      }
       render()
       return
     }
@@ -335,6 +417,7 @@ function startOverlay(): HudHandle {
         answer: message.answer,
         answerEn: message.answerEn,
         answerRu: message.answerRu,
+        code: message.code,
         error: message.error,
       })
       render()
@@ -344,6 +427,26 @@ function startOverlay(): HudHandle {
       questionsPlaque.clear()
       closedQuestions = true
       render()
+      return
+    }
+    if (message.type === 'SHOW_SCAN_REGION') {
+      mount()
+      scanPlaque.setBusy(false)
+      scanPlaque.setOpen(true)
+      return
+    }
+    if (message.type === 'HIDE_SCAN_REGION') {
+      scanPlaque.setBusy(false)
+      scanPlaque.setOpen(false)
+      return
+    }
+    if (message.type === 'SHOW_SCAN_SPINNER') {
+      mount()
+      scanPlaque.setBusy(true)
+      return
+    }
+    if (message.type === 'REQUEST_SCAN_CAPTURE') {
+      captureScanRegion()
       return
     }
     if (message.type === 'DISABLE_OVERLAY') {
@@ -432,6 +535,7 @@ function startOverlay(): HudHandle {
       originalPlaque.remove()
       translationPlaque.remove()
       questionsPlaque.unmount()
+      scanPlaque.unmount()
       pageStyle.remove()
     },
   }
@@ -459,22 +563,65 @@ function clampMountedPlaques(): void {
   }
 }
 
+function plaqueLimits(host: HTMLElement): { minW: number; minH: number } {
+  if (host.id === HOST_IDS.scan) {
+    return { minW: SCAN_MIN_W, minH: SCAN_MIN_H }
+  }
+  return { minW: PLAQUE_MIN_W, minH: PLAQUE_MIN_H }
+}
+
 function clampPlaque(host: HTMLElement): void {
+  if (host.getAttribute('data-busy') === '1') {
+    return
+  }
   if (host.offsetWidth < 8) {
+    if (host.id === HOST_IDS.scan) {
+      placeScanIfLost(host)
+    }
     return
   }
   const pads = plaquePads()
-  const maxW = Math.max(PLAQUE_MIN_W, window.innerWidth - pads.left - pads.right)
-  const maxH = Math.max(PLAQUE_MIN_H, window.innerHeight - pads.top - pads.bottom)
+  const mins = plaqueLimits(host)
+  const maxW = Math.max(mins.minW, window.innerWidth - pads.left - pads.right)
+  const maxH = Math.max(mins.minH, window.innerHeight - pads.top - pads.bottom)
   const rect = host.getBoundingClientRect()
-  const width = Math.min(Math.max(PLAQUE_MIN_W, rect.width), maxW)
-  const height = Math.min(Math.max(PLAQUE_MIN_H, rect.height), maxH)
+  const width = Math.min(Math.max(mins.minW, rect.width), maxW)
+  const height = Math.min(Math.max(mins.minH, rect.height), maxH)
   const left = Math.min(Math.max(pads.left, rect.left), window.innerWidth - pads.right - width)
   const top = Math.min(Math.max(pads.top, rect.top), window.innerHeight - pads.bottom - height)
   setImportantPx(host, 'width', width)
   setImportantPx(host, 'height', height)
   setImportantPx(host, 'left', left)
   setImportantPx(host, 'top', top)
+  host.style.setProperty('right', 'auto', 'important')
+  host.style.setProperty('bottom', 'auto', 'important')
+  host.style.setProperty('transform', 'none', 'important')
+}
+
+function placeScanIfLost(host: HTMLElement): void {
+  if (host.id !== HOST_IDS.scan || host.getAttribute('data-busy') === '1') {
+    return
+  }
+  const rect = host.getBoundingClientRect()
+  const onScreen =
+    rect.width >= SCAN_MIN_W &&
+    rect.height >= SCAN_MIN_H &&
+    rect.bottom > 48 &&
+    rect.right > 48 &&
+    rect.top < window.innerHeight - 48 &&
+    rect.left < window.innerWidth - 48
+  if (onScreen) {
+    return
+  }
+  const pads = plaquePads()
+  const maxW = Math.max(SCAN_MIN_W, window.innerWidth - pads.left - pads.right)
+  const maxH = Math.max(SCAN_MIN_H, window.innerHeight - pads.top - pads.bottom)
+  const width = Math.min(720, maxW)
+  const height = Math.min(480, maxH)
+  setImportantPx(host, 'width', width)
+  setImportantPx(host, 'height', height)
+  setImportantPx(host, 'left', pads.left + Math.max(0, (maxW - width) / 2))
+  setImportantPx(host, 'top', pads.top + 24)
   host.style.setProperty('right', 'auto', 'important')
   host.style.setProperty('bottom', 'auto', 'important')
   host.style.setProperty('transform', 'none', 'important')
@@ -495,10 +642,22 @@ function applySavedSize(host: HTMLElement): void {
   }
   setImportantPx(host, 'width', saved.w)
   setImportantPx(host, 'height', saved.h)
+  if (saved.x !== undefined && saved.y !== undefined) {
+    setImportantPx(host, 'left', saved.x)
+    setImportantPx(host, 'top', saved.y)
+    host.style.setProperty('right', 'auto', 'important')
+    host.style.setProperty('bottom', 'auto', 'important')
+    host.style.setProperty('transform', 'none', 'important')
+  }
 }
 
 function persistPlaqueSize(host: HTMLElement): void {
-  plaqueSizes[host.id] = { w: host.offsetWidth, h: host.offsetHeight }
+  const rect = host.getBoundingClientRect()
+  plaqueSizes[host.id] = {
+    w: host.offsetWidth,
+    h: host.offsetHeight,
+    ...(host.id === HOST_IDS.scan ? { x: rect.left, y: rect.top } : {}),
+  }
   window.clearTimeout(plaqueSaveTimer)
   plaqueSaveTimer = window.setTimeout(() => {
     void chrome.storage.local.set({ plaqueSizes })
@@ -550,6 +709,9 @@ function bindPlaqueFrame(host: HTMLElement, handle: HTMLElement, grip: HTMLEleme
   }
 
   const stopDrag = () => {
+    if (dragging) {
+      persistPlaqueSize(host)
+    }
     dragging = false
   }
 
@@ -573,12 +735,13 @@ function bindPlaqueFrame(host: HTMLElement, handle: HTMLElement, grip: HTMLEleme
       return
     }
     const pads = plaquePads()
-    const maxW = Math.max(PLAQUE_MIN_W, window.innerWidth - pads.left - pads.right)
-    const maxH = Math.max(PLAQUE_MIN_H, window.innerHeight - pads.top - pads.bottom)
+    const mins = plaqueLimits(host)
+    const maxW = Math.max(mins.minW, window.innerWidth - pads.left - pads.right)
+    const maxH = Math.max(mins.minH, window.innerHeight - pads.top - pads.bottom)
     const dx = event.clientX - startX
     const dy = event.clientY - startY
-    let width = Math.min(Math.max(PLAQUE_MIN_W, startWidth + dx), maxW)
-    let height = Math.min(Math.max(PLAQUE_MIN_H, startHeight + dy), maxH)
+    let width = Math.min(Math.max(mins.minW, startWidth + dx), maxW)
+    let height = Math.min(Math.max(mins.minH, startHeight + dy), maxH)
     let left = startLeft
     let top = startTop
     const maxRight = window.innerWidth - pads.right
@@ -847,7 +1010,7 @@ function plaqueCardCss(): string {
     }
     .answer {
       margin: 6px 0 0;
-      max-height: 11em;
+      max-height: 22em;
       overflow-y: auto;
       padding: 8px;
       border: 1px solid rgba(74, 99, 181, 0.16);
@@ -857,6 +1020,17 @@ function plaqueCardCss(): string {
       font-size: 13px;
       line-height: 1.4;
       white-space: pre-wrap;
+    }
+    .answer .code {
+      display: block;
+      margin: 8px 0 0;
+      padding: 8px;
+      border-radius: 8px;
+      background: rgba(18, 48, 58, 0.08);
+      color: #12303a;
+      font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: pre-wrap;
+      overflow-x: auto;
     }
     .answer.error {
       color: #d24b5c;
@@ -991,6 +1165,183 @@ function createPlaque(options: {
   }
 }
 
+function createScanPlaque(options: {
+  id: string
+  title: string
+  analyzeLabel: string
+  onAnalyze: () => void
+  onClose: () => void
+}): {
+  mount: (root: Element) => void
+  setOpen: (open: boolean) => void
+  setBusy: (busy: boolean) => void
+  isOpen: () => boolean
+  rect: () => DOMRect | null
+  unmount: () => void
+} {
+  const host = document.createElement('div')
+  host.id = options.id
+  host.setAttribute('data-jarvis-hud', String(HUD_REV))
+  host.setAttribute('data-kind', 'scan')
+
+  const shadow = host.attachShadow({ mode: 'open' })
+  const card = document.createElement('div')
+  card.className = 'card'
+  card.innerHTML = `
+    <div class="handle">
+      <span class="title"></span>
+      <div class="actions">
+        <button class="go" type="button"></button>
+        <button class="close" type="button">×</button>
+      </div>
+    </div>
+    <div class="grip" aria-hidden="true"></div>
+    <div class="wait" aria-hidden="true"><span class="spin"></span></div>
+  `
+  const css = document.createElement('style')
+  css.textContent =
+    plaqueCardCss() +
+    `
+    .card {
+      padding: 8px 10px 14px;
+    }
+    .handle {
+      margin-bottom: 0;
+      padding: 4px 6px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.82);
+    }
+    .go {
+      height: 22px;
+      padding: 0 8px;
+      border: 1px solid rgba(62, 220, 232, 0.7);
+      border-radius: 6px;
+      background: rgba(62, 220, 232, 0.16);
+      color: #0f6f78;
+      font: 600 10px/1 "Avenir Next", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+    .grip {
+      width: 22px;
+      height: 22px;
+    }
+    .wait {
+      display: none;
+      place-items: center;
+      height: 100%;
+    }
+    .card.busy .handle,
+    .card.busy .grip {
+      display: none;
+    }
+    .card.busy .wait {
+      display: grid;
+    }
+    .spin {
+      width: 22px;
+      height: 22px;
+      border: 2px solid rgba(62, 220, 232, 0.28);
+      border-top-color: #2bb8c4;
+      border-radius: 50%;
+      animation: jarvis-spin 0.7s linear infinite;
+    }
+    @keyframes jarvis-spin {
+      to { transform: rotate(360deg); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .spin { animation-duration: 1.4s; }
+    }
+  `
+  shadow.append(css, card)
+  const titleEl = shadow.querySelector('.title') as HTMLElement
+  const close = shadow.querySelector('.close') as HTMLButtonElement
+  const go = shadow.querySelector('.go') as HTMLButtonElement
+  const handle = shadow.querySelector('.handle') as HTMLElement
+  const grip = shadow.querySelector('.grip') as HTMLElement
+  titleEl.textContent = options.title
+  go.textContent = options.analyzeLabel
+  close.setAttribute('aria-label', chrome.i18n.getMessage('overlayClose') || 'Close')
+
+  close.addEventListener('pointerdown', (event) => event.stopPropagation())
+  close.addEventListener('click', (event) => {
+    event.stopPropagation()
+    options.onClose()
+  })
+  go.addEventListener('pointerdown', (event) => event.stopPropagation())
+  go.addEventListener('click', (event) => {
+    event.stopPropagation()
+    options.onAnalyze()
+  })
+  const unbindFrame = bindPlaqueFrame(host, handle, grip, [close, go])
+
+  return {
+    mount(root) {
+      if (host.parentNode !== root) {
+        root.append(host)
+      }
+    },
+    setOpen(open) {
+      if (open) {
+        const root = document.fullscreenElement ?? document.documentElement
+        if (host.parentNode !== root) {
+          root.append(host)
+        }
+      }
+      if (!open) {
+        host.setAttribute('data-busy', '0')
+        card.classList.remove('busy')
+      }
+      host.setAttribute('data-open', open ? '1' : '0')
+      host.style.setProperty('display', open ? 'block' : 'none', 'important')
+      host.style.setProperty('visibility', open ? 'visible' : 'hidden', 'important')
+      host.style.setProperty('opacity', open ? '1' : '0', 'important')
+      if (open && host.getAttribute('data-busy') !== '1') {
+        applySavedSize(host)
+        requestAnimationFrame(() => {
+          clampPlaque(host)
+          placeScanIfLost(host)
+        })
+      }
+    },
+    setBusy(busy) {
+      const wasBusy = host.getAttribute('data-busy') === '1'
+      host.setAttribute('data-busy', busy ? '1' : '0')
+      card.classList.toggle('busy', busy)
+      if (busy) {
+        const root = document.fullscreenElement ?? document.documentElement
+        if (host.parentNode !== root) {
+          root.append(host)
+        }
+        host.setAttribute('data-open', '1')
+        host.style.setProperty('display', 'block', 'important')
+        host.style.setProperty('visibility', 'visible', 'important')
+        host.style.setProperty('opacity', '1', 'important')
+        return
+      }
+      if (wasBusy) {
+        applySavedSize(host)
+        requestAnimationFrame(() => {
+          clampPlaque(host)
+          placeScanIfLost(host)
+        })
+      }
+    },
+    isOpen() {
+      return host.getAttribute('data-open') === '1' && host.style.display !== 'none'
+    },
+    rect() {
+      const box = host.getBoundingClientRect()
+      return box.width > 8 && box.height > 8 ? box : null
+    },
+    unmount() {
+      unbindFrame()
+      host.remove()
+    },
+  }
+}
+
 function createQuestionsPlaque(options: {
   id: string
   title: string
@@ -1004,7 +1355,7 @@ function createQuestionsPlaque(options: {
   drop: (id: string) => void
   setAnswer: (
     id: string,
-    payload: { answer?: string; answerEn?: string; answerRu?: string; error?: string },
+    payload: { answer?: string; answerEn?: string; answerRu?: string; code?: string; error?: string },
   ) => void
   clear: () => void
   ids: () => string[]
@@ -1019,6 +1370,7 @@ function createQuestionsPlaque(options: {
     answer: string
     answerEn: string
     answerRu: string
+    code: string
     error: string
     loading: boolean
     open: boolean
@@ -1141,7 +1493,7 @@ function createQuestionsPlaque(options: {
       const lines = questionLines(item)
       ask.textContent = lines.main
       ask.addEventListener('click', () => {
-        if (item.open && !item.loading && (item.answer || item.answerEn || item.answerRu || item.error)) {
+        if (item.open && !item.loading && (item.answer || item.answerEn || item.answerRu || item.code || item.error)) {
           item.open = false
           paint()
           return
@@ -1152,7 +1504,7 @@ function createQuestionsPlaque(options: {
           paint()
           return
         }
-        if (!item.answer && !item.answerEn && !item.answerRu && !item.error) {
+        if (!item.answer && !item.answerEn && !item.answerRu && !item.code && !item.error) {
           item.loading = true
           options.onAsk(item.id)
         }
@@ -1190,7 +1542,7 @@ function createQuestionsPlaque(options: {
         } else {
           const pairs = answerLines(item)
           if (pairs.length === 1 && !pairs[0].label) {
-            answer.textContent = pairs[0].text
+            answer.append(document.createTextNode(pairs[0].text))
           } else {
             for (const pair of pairs) {
               const line = document.createElement('p')
@@ -1200,6 +1552,12 @@ function createQuestionsPlaque(options: {
               line.append(label, document.createTextNode(pair.text))
               answer.append(line)
             }
+          }
+          if (item.code) {
+            const code = document.createElement('pre')
+            code.className = 'code'
+            code.textContent = item.code
+            answer.append(code)
           }
         }
         row.append(answer)
@@ -1240,6 +1598,7 @@ function createQuestionsPlaque(options: {
         answer: '',
         answerEn: '',
         answerRu: '',
+        code: '',
         error: '',
         loading: false,
         open: false,
@@ -1273,6 +1632,9 @@ function createQuestionsPlaque(options: {
       }
       if (payload.answerRu !== undefined) {
         item.answerRu = payload.answerRu.trim()
+      }
+      if (payload.code !== undefined) {
+        item.code = payload.code.trim()
       }
       paint()
     },

@@ -119,6 +119,55 @@ export async function answerQuestion(
   return parseAnswerPair(raw)
 }
 
+export type ScreenTask = {
+  hasTask: boolean
+  title: string
+  task: string
+  answerEn: string
+  answerRu: string
+  code: string
+}
+
+export async function analyzeScreenTask(
+  provider: ProviderId,
+  apiKey: string,
+  imageDataUrl: string,
+  context: AnswerContext = {},
+): Promise<ScreenTask> {
+  const compact = await compactScreenshot(imageDataUrl)
+  const raw = await chatVision(
+    provider,
+    apiKey,
+    'Read the screenshot and solve it. Return JSON only.',
+    screenTaskPrompt(context),
+    compact,
+  )
+  return parseScreenTask(raw)
+}
+
+function screenTaskPrompt(context: AnswerContext): string {
+  const profile = context.profile?.trim() ?? ''
+  const tags = (context.badges ?? [])
+    .map((badge) => badge.replace(/-/g, ' ').trim())
+    .filter(Boolean)
+    .join(', ')
+  return `You solve tasks from a screenshot of a live interview, quiz, or coding screen.
+Read every visible word, including all multiple-choice options. Do not skip options or tiny text.
+
+Return JSON only:
+{"hasTask":false,"title":"","task":"","answerEn":"","answerRu":"","code":""}
+
+Rules:
+- hasTask false only if there is no question or problem.
+- title: short name. For a quiz, include the chosen option, e.g. "B — map returns a new array".
+- task: one sentence, what was asked.
+- answerEn / answerRu: the answer to say out loud. 1-3 short sentences each. No markdown, no thinking.
+- code: working code only when they must write code. Empty for multiple choice.
+- For JavaScript quizzes, execute the snippet as the spec would: hoisting, this, closures, coercion, == vs ===, const/let/var, prototype, event loop, promises, spread/rest, pass-by-reference. Pick the option that matches actual runtime, not the tempting wrong one.
+- If several questions are visible, answer the highlighted or first complete one.
+${profile ? `Profile:\n${profile}\n` : ''}${tags ? `Tags: ${tags}\n` : ''}`.trim()
+}
+
 function chatText(
   provider: ProviderId,
   apiKey: string,
@@ -137,6 +186,38 @@ function chatText(
     return geminiGenerate(apiKey, undefined, `${prompt}\n\n${text}`)
   }
   return chatOpenAiCompatible('https://api.openai.com/v1', apiKey, text, prompt, ['gpt-4o-mini'], json)
+}
+
+function chatVision(
+  provider: ProviderId,
+  apiKey: string,
+  text: string,
+  prompt: string,
+  imageDataUrl: string,
+): Promise<string> {
+  if (provider === 'groq') {
+    return chatOpenAiCompatible(
+      'https://api.groq.com/openai/v1',
+      apiKey,
+      text,
+      prompt,
+      ['qwen/qwen3.8-27b', 'qwen/qwen3.6-27b'],
+      true,
+      imageDataUrl,
+    )
+  }
+  if (provider === 'gemini') {
+    return geminiGenerate(apiKey, undefined, `${prompt}\n\n${text}`, { imageDataUrl, json: true })
+  }
+  return chatOpenAiCompatible(
+    'https://api.openai.com/v1',
+    apiKey,
+    text,
+    prompt,
+    ['gpt-4o-mini', 'gpt-4o'],
+    true,
+    imageDataUrl,
+  )
 }
 
 function parseQuestionList(raw: string): string[] {
@@ -187,6 +268,53 @@ function parseAnswerPair(raw: string): { en: string; ru: string } {
   return looksRussian(fallback) ? { en: '', ru: fallback } : { en: fallback, ru: '' }
 }
 
+function parseScreenTask(raw: string): ScreenTask {
+  const empty: ScreenTask = { hasTask: false, title: '', task: '', answerEn: '', answerRu: '', code: '' }
+  const cleaned = stripModelJunk(raw)
+  const json = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/u, '')
+  const parsed = tryParseJson(json) ?? tryParseJson(extractJsonObject(json))
+  if (!parsed || Array.isArray(parsed)) {
+    return empty
+  }
+  const hasTask = parsed.hasTask === true || parsed.hasTask === 'true'
+  if (!hasTask) {
+    return empty
+  }
+  const title = sanitizeScreenProse(typeof parsed.title === 'string' ? parsed.title : '', 120)
+  const task = sanitizeScreenProse(typeof parsed.task === 'string' ? parsed.task : '', 600)
+  const answerEn = sanitizeScreenProse(typeof parsed.answerEn === 'string' ? parsed.answerEn : '', 1200)
+  const answerRu = sanitizeScreenProse(typeof parsed.answerRu === 'string' ? parsed.answerRu : '', 1200)
+  const code = sanitizeScreenCode(typeof parsed.code === 'string' ? parsed.code : '')
+  if (!title && !task && !answerEn && !answerRu && !code) {
+    return empty
+  }
+  return { hasTask: true, title, task, answerEn, answerRu, code }
+}
+
+function sanitizeScreenProse(text: string, max: number): string {
+  const clean = text
+    .replace(/<think\b[^>]*>[\s\S]*?(?:<\/think>|$)/gi, ' ')
+    .replace(/<\/?[a-z][\w:-]*\b[^>]*>/gi, ' ')
+    .replace(/<\|[^|]*\|>/g, ' ')
+    .replace(/[*#>`]+/g, ' ')
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim()
+  return clean.slice(0, max).trim()
+}
+
+function sanitizeScreenCode(text: string): string {
+  const unfenced = text
+    .replace(/^```[\w+-]*\s*/u, '')
+    .replace(/\s*```$/u, '')
+    .replace(/<think\b[^>]*>[\s\S]*?(?:<\/think>|$)/gi, '')
+    .replace(/\r\n/g, '\n')
+    .trim()
+  return unfenced.slice(0, 4000).trim()
+}
+
 function stripModelJunk(text: string): string {
   return text
     .replace(/<think\b[^>]*>[\s\S]*?(?:<\/think>|$)/gi, ' ')
@@ -227,12 +355,12 @@ function sanitizeSpokenAnswer(text: string): string {
   return kept.join(' ')
 }
 
-function tryParseJson(text: string | null): { questions?: unknown; en?: unknown; ru?: unknown } | unknown[] | null {
+function tryParseJson(text: string | null): Record<string, unknown> | unknown[] | null {
   if (!text) {
     return null
   }
   try {
-    return JSON.parse(text) as { questions?: unknown } | unknown[]
+    return JSON.parse(text) as Record<string, unknown> | unknown[]
   } catch {
     return null
   }
@@ -308,31 +436,46 @@ async function chatOpenAiCompatible(
   prompt: string,
   models: string[],
   json = false,
+  imageDataUrl?: string,
 ): Promise<string> {
   let lastError = 'Translation failed'
+  const userContent = imageDataUrl
+    ? [
+        { type: 'text', text },
+        { type: 'image_url', image_url: { url: imageDataUrl } },
+      ]
+    : text
   for (const model of models) {
     const modes = json ? [true, false] : [false]
     for (const asJson of modes) {
       try {
         const body: Record<string, unknown> = {
           model,
-          temperature: 0.2,
+          temperature: imageDataUrl ? 0.1 : 0.2,
           messages: [
             { role: 'system', content: prompt },
-            { role: 'user', content: text },
+            { role: 'user', content: userContent },
           ],
+        }
+        if (imageDataUrl) {
+          body.max_tokens = 1600
+          if (base.includes('api.groq.com')) {
+            body.reasoning_effort = 'none'
+            body.reasoning_format = 'hidden'
+          }
         }
         if (asJson) {
           body.response_format = { type: 'json_object' }
         }
-        const response = await fetch(`${base}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(body),
-        })
+        let response = await postChatCompletion(base, apiKey, body)
+        if (!response.ok) {
+          lastError = await readError(response)
+          if (body.reasoning_effort && /reasoning|thinking/i.test(lastError)) {
+            delete body.reasoning_effort
+            delete body.reasoning_format
+            response = await postChatCompletion(base, apiKey, body)
+          }
+        }
         if (!response.ok) {
           lastError = await readError(response)
           if (asJson) {
@@ -365,8 +508,19 @@ async function chatOpenAiCompatible(
   throw new Error(lastError)
 }
 
-async function geminiGenerate(apiKey: string, blob: Blob | undefined, prompt: string): Promise<string> {
-  const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
+async function geminiGenerate(
+  apiKey: string,
+  blob: Blob | undefined,
+  prompt: string,
+  options?: { imageDataUrl?: string; json?: boolean },
+): Promise<string> {
+  const models = [
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-3.1-flash-lite',
+    'gemini-2.5-flash',
+    'gemini-flash-latest',
+  ]
   const parts: Array<Record<string, unknown>> = [{ text: prompt }]
   if (blob) {
     parts.push({
@@ -376,48 +530,133 @@ async function geminiGenerate(apiKey: string, blob: Blob | undefined, prompt: st
       },
     })
   }
+  const image = parseDataUrl(options?.imageDataUrl)
+  if (image) {
+    parts.push({
+      inlineData: {
+        mimeType: image.mime,
+        data: image.data,
+      },
+    })
+  }
 
   let lastError = 'Gemini request failed'
   for (const model of models) {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
+    const thinkingModes = image ? [true, false] : [false]
+    for (const withThinkingOff of thinkingModes) {
+      const generationConfig: Record<string, unknown> = { temperature: image ? 0.1 : 0.2 }
+      if (options?.json) {
+        generationConfig.responseMimeType = 'application/json'
+      }
+      if (image) {
+        generationConfig.maxOutputTokens = 1600
+        if (withThinkingOff) {
+          generationConfig.thinkingConfig = { thinkingBudget: 0 }
+        }
+      }
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey,
+          },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts }],
+            generationConfig,
+          }),
         },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts }],
-          generationConfig: { temperature: 0.2 },
-        }),
-      },
-    )
+      )
 
-    if (!response.ok) {
-      lastError = await readError(response)
-      if (isRetryableModelError(lastError)) {
+      if (!response.ok) {
+        lastError = await readError(response)
+        if (withThinkingOff && /thinking|unknown argument|invalid argument/i.test(lastError)) {
+          continue
+        }
+        if (isRetryableModelError(lastError)) {
+          break
+        }
+        throw new Error(lastError)
+      }
+
+      const data = (await response.json()) as {
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
+        error?: { message?: string }
+      }
+      if (data.error?.message) {
+        lastError = data.error.message
+        if (isRetryableModelError(lastError)) {
+          break
+        }
         continue
       }
-      throw new Error(lastError)
+      const text = (data.candidates?.[0]?.content?.parts ?? [])
+        .map((part) => part.text ?? '')
+        .join('')
+        .trim()
+      if (text) {
+        return text
+      }
     }
-
-    const data = (await response.json()) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
-      error?: { message?: string }
-    }
-    if (data.error?.message) {
-      lastError = data.error.message
-      continue
-    }
-    const text = (data.candidates?.[0]?.content?.parts ?? [])
-      .map((part) => part.text ?? '')
-      .join('')
-      .trim()
-    return text
   }
 
   throw new Error(lastError)
+}
+
+function parseDataUrl(dataUrl?: string): { mime: string; data: string } | null {
+  if (!dataUrl) {
+    return null
+  }
+  const match = /^data:(image\/[\w+.-]+);base64,(.+)$/s.exec(dataUrl)
+  if (!match) {
+    return null
+  }
+  return { mime: match[1], data: match[2] }
+}
+
+async function postChatCompletion(
+  base: string,
+  apiKey: string,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  return fetch(`${base}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+}
+
+async function compactScreenshot(dataUrl: string): Promise<string> {
+  if (typeof Image === 'undefined' || typeof document === 'undefined') {
+    return dataUrl
+  }
+  return new Promise((resolve) => {
+    const image = new Image()
+    image.onload = () => {
+      const maxSide = 1280
+      const scale = Math.min(1, maxSide / Math.max(image.width, image.height))
+      if (scale >= 0.98 && dataUrl.length < 220_000) {
+        resolve(dataUrl)
+        return
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(image.width * scale))
+      canvas.height = Math.max(1, Math.round(image.height * scale))
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        resolve(dataUrl)
+        return
+      }
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height)
+      resolve(canvas.toDataURL('image/jpeg', 0.72))
+    }
+    image.onerror = () => resolve(dataUrl)
+    image.src = dataUrl
+  })
 }
 
 async function readError(response: Response): Promise<string> {

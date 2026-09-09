@@ -124,6 +124,19 @@ chrome.runtime.onMessage.addListener(
       return true
     }
 
+    if (message.type === MessageType.CaptureTabScreenshot) {
+      captureTabScreenshot(message.tabId)
+        .then((image) => sendResponse({ ok: true, image }))
+        .catch((error: unknown) =>
+          sendResponse({
+            ok: false,
+            error: errorMessage(error) || chrome.i18n.getMessage('screenError'),
+            code: error instanceof NamedError ? error.code : undefined,
+          }),
+        )
+      return true
+    }
+
     if (message.type === MessageType.SidePanelPresence) {
       windowClearHideTimer()
       sidePanelVisible = message.visible === true
@@ -267,6 +280,33 @@ chrome.runtime.onMessage.addListener(
     }
 
     if (message.type === MessageType.RequestOverlayAnswer) {
+      if (sender.tab) {
+        void chrome.runtime.sendMessage(message).catch(() => undefined)
+      }
+      sendResponse({ ok: true })
+      return false
+    }
+
+    if (
+      message.type === MessageType.ShowScanRegion ||
+      message.type === MessageType.HideScanRegion ||
+      message.type === MessageType.ShowScanSpinner ||
+      message.type === MessageType.RequestScanCapture
+    ) {
+      overlayBoot
+        .then(() => broadcastScan(message))
+        .then(() => sendResponse({ ok: true }))
+        .catch((error: unknown) =>
+          sendResponse({
+            ok: false,
+            error: errorMessage(error) || chrome.i18n.getMessage('screenError'),
+            code: error instanceof NamedError ? error.code : undefined,
+          }),
+        )
+      return true
+    }
+
+    if (message.type === MessageType.ScanRegionCapture || message.type === MessageType.ScanRegionCancel) {
       if (sender.tab) {
         void chrome.runtime.sendMessage(message).catch(() => undefined)
       }
@@ -464,6 +504,7 @@ async function hideOverlayDom(tabId: number): Promise<void> {
           'jarvis-plaque-original',
           'jarvis-plaque-translation',
           'jarvis-plaque-questions',
+          'jarvis-plaque-scan',
         ]) {
           const host = document.getElementById(id)
           if (host) {
@@ -567,6 +608,28 @@ async function broadcastOverlay(message: ExtensionMessage): Promise<void> {
   await Promise.all(tabIds.map((tabId) => sendOverlayToTab(tabId, message)))
 }
 
+async function broadcastScan(message: ExtensionMessage): Promise<void> {
+  overlayEnabled = true
+  persistOverlaySession()
+  const tabs = await allHttpTabIds()
+  const preferred = await resolveScreenshotTab()
+  const ordered = [...new Set([preferred?.id, ...tabs].filter((id): id is number => typeof id === 'number'))]
+  if (ordered.length === 0) {
+    throw new NamedError('overlay-no-tab', chrome.i18n.getMessage('captionsNoTab'))
+  }
+  overlayTabIds = new Set(ordered)
+  persistOverlaySession()
+  const hide = message.type === MessageType.HideScanRegion
+  const send = async (tabId: number): Promise<void> => {
+    if (!hide) {
+      await injectOverlay(tabId)
+    }
+    await sendToFrame(tabId, message)
+  }
+  await send(ordered[0])
+  await Promise.all(ordered.slice(1).map((tabId) => send(tabId).catch(() => undefined)))
+}
+
 async function allHttpTabIds(): Promise<number[]> {
   const tabs = await chrome.tabs.query({})
   return tabs.filter((tab) => tab.id && isHttpTab(tab)).map((tab) => tab.id as number)
@@ -578,6 +641,55 @@ function isHttpUrl(url: string): boolean {
 
 function isHttpTab(tab: chrome.tabs.Tab): boolean {
   return isHttpUrl(tab.url ?? tab.pendingUrl ?? '')
+}
+
+const TASK_TAB_RE =
+  /leetcode|hackerrank|codesignal|coderpad|codility|codewars|hackerearth|codesandbox|jsfiddle|replit|algoexpert|interviewing\.io|github\.com|gitlab|bitbucket|codepen|stackblitz/
+
+async function captureTabScreenshot(tabId?: number): Promise<string> {
+  const tab = tabId ? await chrome.tabs.get(tabId) : await resolveScreenshotTab()
+  if (!tab?.id || tab.windowId === undefined || !isHttpTab(tab)) {
+    throw new NamedError('overlay-no-tab', chrome.i18n.getMessage('captionsNoTab'))
+  }
+  if (!tab.active) {
+    await chrome.tabs.update(tab.id, { active: true })
+    await new Promise((resolve) => setTimeout(resolve, 280))
+  }
+  const image = await chrome.tabs.captureVisibleTab(tab.windowId, {
+    format: 'jpeg',
+    quality: 72,
+  })
+  if (!image) {
+    throw new NamedError('overlay-host', chrome.i18n.getMessage('screenError'))
+  }
+  return image
+}
+
+async function resolveScreenshotTab(): Promise<chrome.tabs.Tab | undefined> {
+  const focused = await chrome.windows.getLastFocused()
+  const tabs = await chrome.tabs.query({})
+  const http = tabs.filter((tab) => tab.id && isHttpTab(tab))
+  const sameWindow = http.filter((tab) => tab.windowId === focused.id)
+  const activeHere = sameWindow.find((tab) => tab.active)
+  if (activeHere) {
+    return activeHere
+  }
+  const taskHere = sameWindow.find((tab) => TASK_TAB_RE.test(tab.url ?? ''))
+  if (taskHere) {
+    return taskHere
+  }
+  const anyTask = http.find((tab) => TASK_TAB_RE.test(tab.url ?? ''))
+  if (anyTask) {
+    return anyTask
+  }
+  const meeting =
+    http.find((tab) => tab.audible && overlayScore(tab) >= 8) ??
+    sameWindow.find((tab) => overlayScore(tab) >= 8) ??
+    http.find((tab) => overlayScore(tab) >= 8)
+  if (meeting) {
+    return meeting
+  }
+  return http.find((tab) => tab.audible) ?? http[0]
 }
 
 async function overlayTargets(): Promise<number[]> {

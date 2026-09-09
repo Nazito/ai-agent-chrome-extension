@@ -224,6 +224,51 @@
   "captionsOpened": {
     "message": "Two cards on the meeting tab: source language on the left, translation on the right. Drag them if needed."
   },
+  "screenScan": {
+    "message": "Scan the tab for a task"
+  },
+  "screenScanning": {
+    "message": "Reading the selected area…"
+  },
+  "screenNoTask": {
+    "message": "No task in this area. Resize the frame and scan again."
+  },
+  "screenFound": {
+    "message": "Task is on the overlay questions card, with a solution."
+  },
+  "screenError": {
+    "message": "Could not capture the tab."
+  },
+  "screenRegion": {
+    "message": "Scan area"
+  },
+  "screenRegionAnalyze": {
+    "message": "Analyze"
+  },
+  "screenRegionHint": {
+    "message": "Drag and resize the frame over the task, then click Analyze."
+  },
+  "screenScanHide": {
+    "message": "Hide scan area"
+  },
+  "issueScreenBadKey": {
+    "message": "Could not read the screen: the {provider} key was rejected."
+  },
+  "issueScreenQuota": {
+    "message": "Could not read the screen: {provider} quota is exhausted."
+  },
+  "issueScreenRateLimit": {
+    "message": "Could not read the screen: {provider} is rate-limiting requests."
+  },
+  "issueScreenModelGone": {
+    "message": "Could not read the screen: {provider} has no working vision model."
+  },
+  "issueScreenNetwork": {
+    "message": "Could not read the screen: no connection to {provider}."
+  },
+  "issueScreenUnknown": {
+    "message": "Could not read the screen: {provider} returned an error. {detail}"
+  },
   "sidebarCaptionsHide": {
     "message": "Hide captions"
   },
