@@ -224,6 +224,21 @@
   "captionsOpened": {
     "message": "Two cards on the meeting tab: source language on the left, translation on the right. Drag them if needed."
   },
+  "stealthHide": {
+    "message": "Hide cards from screen share"
+  },
+  "stealthShow": {
+    "message": "Show cards on the shared tab"
+  },
+  "stealthOnHint": {
+    "message": "Cards are hidden on the shared tab. Share a Chrome tab, not the whole screen. A floating window stays on your display; the scan frame is still visible if you open it."
+  },
+  "stealthOffHint": {
+    "message": "Cards are on the page again — screen share will show them."
+  },
+  "stealthPipKicker": {
+    "message": "Only you"
+  },
   "screenScan": {
     "message": "Scan the tab for a task"
   },

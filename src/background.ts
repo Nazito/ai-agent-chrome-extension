@@ -143,7 +143,7 @@ chrome.runtime.onMessage.addListener(
       if (sidePanelVisible) {
         sidePanelPorts = Math.max(sidePanelPorts, 1)
         void chrome.storage.local.set({ sidePanelOpen: true })
-      } else {
+      } else if (sidePanelPorts === 0) {
         void hideOverlaysIfSidePanelClosed()
       }
       sendResponse({ ok: true })
@@ -152,7 +152,7 @@ chrome.runtime.onMessage.addListener(
 
     if (message.type === MessageType.EnableOverlay) {
       void overlayBoot.then(async () => {
-        if (!(await sidePanelIsOpen())) {
+        if (!(await sidePanelIsOpen()) && sidePanelPorts === 0) {
           return
         }
         if (isTranslateDirection(message.direction)) {
@@ -291,7 +291,8 @@ chrome.runtime.onMessage.addListener(
       message.type === MessageType.ShowScanRegion ||
       message.type === MessageType.HideScanRegion ||
       message.type === MessageType.ShowScanSpinner ||
-      message.type === MessageType.RequestScanCapture
+      message.type === MessageType.RequestScanCapture ||
+      message.type === MessageType.SetOverlayStealth
     ) {
       overlayBoot
         .then(() => broadcastScan(message))
@@ -590,7 +591,7 @@ async function broadcastOverlay(message: ExtensionMessage): Promise<void> {
       message.type === MessageType.ShowOverlayQuestion ||
       message.type === MessageType.ShowOverlayAnswer)
   ) {
-    if (!sidePanelVisible) {
+    if (!sidePanelVisible && sidePanelPorts === 0) {
       return
     }
     overlayEnabled = true
@@ -694,12 +695,21 @@ async function resolveScreenshotTab(): Promise<chrome.tabs.Tab | undefined> {
 
 async function overlayTargets(): Promise<number[]> {
   const tabs = await chrome.tabs.query({})
+  const focused = await chrome.windows.getLastFocused().catch(() => undefined)
   const ids = new Set<number>()
   for (const tab of tabs) {
     if (!tab.id || !isHttpTab(tab)) {
       continue
     }
-    if (overlayTabIds.has(tab.id) || tab.audible || tab.active || overlayScore(tab) >= 8) {
+    const sameWindow = focused?.id !== undefined && tab.windowId === focused.id
+    if (
+      overlayTabIds.has(tab.id) ||
+      tab.audible ||
+      tab.active ||
+      sameWindow ||
+      overlayScore(tab) >= 8 ||
+      TASK_TAB_RE.test(tab.url ?? '')
+    ) {
       ids.add(tab.id)
     }
   }

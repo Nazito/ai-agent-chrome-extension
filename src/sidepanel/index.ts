@@ -39,6 +39,7 @@ const micToggle = document.getElementById('mic-toggle') as HTMLButtonElement
 const tabToggle = document.getElementById('tab-toggle') as HTMLButtonElement
 const captionsToggle = document.getElementById('captions-toggle') as HTMLButtonElement
 const screenToggle = document.getElementById('screen-toggle') as HTMLButtonElement
+const stealthToggle = document.getElementById('stealth-toggle') as HTMLButtonElement
 const sidebarCaptionsToggle = document.getElementById(
   'sidebar-captions-toggle',
 ) as HTMLButtonElement
@@ -131,6 +132,9 @@ let extractQueued = false
 let screenScanBusy = false
 let scanRegionOpen = false
 let scanCommandBusy = false
+let overlayStealth = false
+let stealthHud: Window | null = null
+let stealthBusy = false
 let hintLockUntil = 0
 let silentSince = 0
 let sidePanelClosing = false
@@ -207,6 +211,8 @@ statusEl.title = statusEl.textContent
 writeHint(chrome.i18n.getMessage('micIdleHint'))
 labelButton(captionsToggle, 'captionsOpen')
 labelButton(screenToggle, 'screenScan')
+labelButton(stealthToggle, 'stealthHide')
+paintStealthButton()
 labelButton(clearOriginal, 'clearOriginal')
 labelButton(clearTranslation, 'clearTranslation')
 setSourceState(micToggle, false)
@@ -226,26 +232,27 @@ window.addEventListener('resize', reportSidePanel)
 window.addEventListener('pagehide', closeSidePanelOverlays)
 window.addEventListener('beforeunload', closeSidePanelOverlays)
 document.addEventListener('visibilitychange', () => {
-  const visible = document.visibilityState === 'visible'
-  void chrome.runtime
-    .sendMessage({ type: MessageType.SidePanelPresence, visible })
-    .catch(() => undefined)
-  if (!visible) {
-    hideOverlaysFromSidePanel()
+  if (document.visibilityState !== 'visible') {
     return
   }
   sidePanelClosing = false
+  void chrome.runtime
+    .sendMessage({ type: MessageType.SidePanelPresence, visible: true })
+    .catch(() => undefined)
   reportSidePanel()
   connectSidePanelPort()
   if (tab.active) {
     startOverlayKeepAlive()
     void sendOverlay({ type: MessageType.EnableOverlay, direction: translateDirection })
+    replayOverlayQuestions()
   }
 })
 
-void chrome.storage.local.get({ sidebarCaptionsHidden: true }).then((stored) => {
+void chrome.storage.local.get({ sidebarCaptionsHidden: true, overlayStealth: false }).then((stored) => {
   hideSidebarCaptions = stored.sidebarCaptionsHidden !== false
+  overlayStealth = stored.overlayStealth === true
   syncLayout()
+  paintStealthButton()
 })
 
 void loadTranslateDirection().then((value) => {
@@ -309,6 +316,10 @@ captionsToggle.addEventListener('click', () => {
 
 screenToggle.addEventListener('click', () => {
   void toggleScanRegion()
+})
+
+stealthToggle.addEventListener('click', () => {
+  void toggleOverlayStealth()
 })
 
 sidebarCaptionsToggle.addEventListener('click', () => {
@@ -828,6 +839,7 @@ function resetQuestions(): void {
   dismissedQuestions.clear()
   visibleQuestions.length = 0
   questionSeq = 0
+  paintStealthHud()
 }
 
 function replayOverlayQuestions(): void {
@@ -848,6 +860,10 @@ function sendQuestion(item: (typeof visibleQuestions)[number]): void {
     answerRu: item.answerRu || undefined,
     code: item.code || undefined,
   })
+  if (item.answerEn || item.answerRu || item.code) {
+    sendAnswer(item)
+  }
+  paintStealthHud()
 }
 
 function sendAnswer(item: (typeof visibleQuestions)[number], error?: string): void {
@@ -860,6 +876,7 @@ function sendAnswer(item: (typeof visibleQuestions)[number], error?: string): vo
     code: item.code || undefined,
     error,
   })
+  paintStealthHud()
 }
 
 function hideOverlaysFromSidePanel(): void {
@@ -890,7 +907,7 @@ function connectSidePanelPort(): void {
     if (sidePanelPort === port) {
       sidePanelPort = null
     }
-    if (sidePanelClosing || document.visibilityState === 'hidden') {
+    if (sidePanelClosing) {
       return
     }
     connectSidePanelPort()
@@ -907,6 +924,7 @@ function dismissQuestion(id: string): void {
       dismissedQuestions.add(item.key)
     }
     visibleQuestions.length = 0
+    paintStealthHud()
     return
   }
   const index = visibleQuestions.findIndex((item) => item.id === id)
@@ -915,6 +933,7 @@ function dismissQuestion(id: string): void {
   }
   dismissedQuestions.add(visibleQuestions[index].key)
   visibleQuestions.splice(index, 1)
+  paintStealthHud()
 }
 
 function pushVisibleQuestion(text: string): void {
@@ -1186,7 +1205,6 @@ async function scanVisibleTab(region: ScanRect): Promise<void> {
       await enableOnScreenCaptions()
     } catch {
       setHint(screenTaskPreview(result), 16000)
-      return
     }
     pushScreenTask(result)
     setHint(chrome.i18n.getMessage('screenFound'), 12000)
@@ -1200,11 +1218,16 @@ async function scanVisibleTab(region: ScanRect): Promise<void> {
   } finally {
     screenScanBusy = false
     paintScanButton()
-    if (scanRegionOpen) {
-      void sendScanCommand(MessageType.ShowScanRegion).catch(() => undefined)
-    } else {
-      void sendScanCommand(MessageType.HideScanRegion).catch(() => undefined)
+    try {
+      if (scanRegionOpen) {
+        await sendScanCommand(MessageType.ShowScanRegion)
+      } else {
+        await sendScanCommand(MessageType.HideScanRegion)
+      }
+    } catch {
+      // Frame restore is best-effort; the answer still goes to the questions card.
     }
+    replayOverlayQuestions()
     restoreListenStatus()
   }
 }
@@ -1297,6 +1320,258 @@ function paintScanButton(): void {
   screenToggle.setAttribute('aria-pressed', String(scanRegionOpen))
   labelButton(screenToggle, scanRegionOpen ? 'screenScanHide' : 'screenScan')
 }
+
+async function toggleOverlayStealth(): Promise<void> {
+  if (stealthBusy) {
+    return
+  }
+  stealthBusy = true
+  paintStealthButton()
+  try {
+    await setOverlayStealth(!overlayStealth)
+  } finally {
+    stealthBusy = false
+    paintStealthButton()
+  }
+}
+
+async function setOverlayStealth(next: boolean): Promise<void> {
+  overlayStealth = next
+  void chrome.storage.local.set({ overlayStealth: next })
+  paintStealthButton()
+  try {
+    await sendStealthCommand(next)
+  } catch {
+    // No page tab yet — storage still hides plaques once a tab loads.
+  }
+  if (next) {
+    if (hideSidebarCaptions) {
+      hideSidebarCaptions = false
+      void chrome.storage.local.set({ sidebarCaptionsHidden: false })
+      syncLayout()
+    }
+    await openStealthHud()
+    setHint(chrome.i18n.getMessage('stealthOnHint'), 16000)
+    return
+  }
+  closeStealthHud()
+  setHint(chrome.i18n.getMessage('stealthOffHint'), 8000)
+}
+
+async function sendStealthCommand(stealth: boolean): Promise<void> {
+  const response = (await chrome.runtime.sendMessage({
+    type: MessageType.SetOverlayStealth,
+    stealth,
+  })) as { ok: true } | { ok: false; error?: string; code?: string } | undefined
+  if (!response || response.ok === false) {
+    throw new NamedError(
+      response?.code ?? 'overlay-host',
+      response?.error ?? chrome.i18n.getMessage('issueOverlayUnknown'),
+    )
+  }
+}
+
+function paintStealthButton(): void {
+  stealthToggle.classList.toggle('active', overlayStealth)
+  stealthToggle.disabled = stealthBusy
+  stealthToggle.setAttribute('aria-pressed', String(overlayStealth))
+  labelButton(stealthToggle, overlayStealth ? 'stealthShow' : 'stealthHide')
+}
+
+async function openStealthHud(): Promise<void> {
+  if (stealthHud && !stealthHud.closed) {
+    paintStealthHud()
+    return
+  }
+  const pip = (
+    window as Window & {
+      documentPictureInPicture?: {
+        requestWindow: (options?: { width?: number; height?: number }) => Promise<Window>
+      }
+    }
+  ).documentPictureInPicture
+  if (!pip?.requestWindow) {
+    return
+  }
+  try {
+    stealthHud = await pip.requestWindow({ width: 400, height: 520 })
+  } catch {
+    stealthHud = null
+    return
+  }
+  const doc = stealthHud.document
+  doc.documentElement.lang = document.documentElement.lang
+  doc.title = chrome.i18n.getMessage('stealthPipKicker')
+  const style = doc.createElement('style')
+  style.textContent = STEALTH_HUD_CSS
+  doc.head.append(style)
+  const root = doc.createElement('div')
+  root.id = 'hud'
+  doc.body.replaceChildren(root)
+  stealthHud.addEventListener('pagehide', () => {
+    stealthHud = null
+  })
+  paintStealthHud()
+}
+
+function closeStealthHud(): void {
+  const hud = stealthHud
+  stealthHud = null
+  try {
+    hud?.close()
+  } catch {
+    // Already closed.
+  }
+}
+
+function paintStealthHud(): void {
+  if (!overlayStealth || !stealthHud || stealthHud.closed) {
+    return
+  }
+  const root = stealthHud.document.getElementById('hud')
+  if (!root) {
+    return
+  }
+  const doc = stealthHud.document
+  const originals = captionTexts(originalEl)
+  const translations = captionTexts(translationEl)
+  const enToRu = translateDirection === 'en-ru'
+  root.replaceChildren()
+  const kicker = doc.createElement('p')
+  kicker.className = 'kicker'
+  kicker.textContent = chrome.i18n.getMessage('stealthPipKicker')
+  root.append(kicker)
+  root.append(
+    stealthSection(
+      doc,
+      chrome.i18n.getMessage(enToRu ? 'originalLabel' : 'translationLabel'),
+      originals,
+    ),
+    stealthSection(
+      doc,
+      chrome.i18n.getMessage(enToRu ? 'translationLabel' : 'originalLabel'),
+      translations,
+    ),
+  )
+  if (visibleQuestions.length === 0) {
+    return
+  }
+  const section = doc.createElement('section')
+  const title = doc.createElement('h2')
+  title.textContent = chrome.i18n.getMessage('overlayQuestions') || 'Questions'
+  section.append(title)
+  for (const item of visibleQuestions) {
+    const card = doc.createElement('article')
+    const q = doc.createElement('p')
+    q.className = 'question'
+    q.textContent = item.textRu || item.textEn || item.text
+    card.append(q)
+    const answer = item.answerRu || item.answerEn
+    if (answer) {
+      const a = doc.createElement('p')
+      a.className = 'answer'
+      a.textContent = answer
+      card.append(a)
+    }
+    if (item.code) {
+      const pre = doc.createElement('pre')
+      pre.textContent = item.code
+      card.append(pre)
+    }
+    section.append(card)
+  }
+  root.append(section)
+}
+
+function stealthSection(doc: Document, label: string, lines: string[]): HTMLElement {
+  const section = doc.createElement('section')
+  const title = doc.createElement('h2')
+  title.textContent = label
+  section.append(title)
+  if (lines.length === 0) {
+    const empty = doc.createElement('p')
+    empty.className = 'empty'
+    empty.textContent = chrome.i18n.getMessage('overlayListening')
+    section.append(empty)
+    return section
+  }
+  for (const line of lines) {
+    const p = doc.createElement('p')
+    p.textContent = line
+    section.append(p)
+  }
+  return section
+}
+
+function captionTexts(host: HTMLElement): string[] {
+  return [...host.querySelectorAll('.caption-line')]
+    .map((el) => (el.textContent ?? '').trim())
+    .filter(Boolean)
+    .slice(-4)
+}
+
+const STEALTH_HUD_CSS = `
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #eef0f6;
+    color: #1b2438;
+    font: 13px/1.4 "Avenir Next", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  }
+  #hud {
+    box-sizing: border-box;
+    height: 100%;
+    overflow: auto;
+    padding: 10px 12px 14px;
+  }
+  .kicker {
+    margin: 0 0 10px;
+    color: #c9922a;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  section + section {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(74, 99, 181, 0.18);
+  }
+  h2 {
+    margin: 0 0 6px;
+    color: #4a63b5;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  p, pre {
+    margin: 0;
+  }
+  p + p, pre {
+    margin-top: 6px;
+  }
+  .empty {
+    color: #5d6780;
+  }
+  .question {
+    color: #5d6780;
+  }
+  .answer {
+    font-weight: 700;
+  }
+  pre {
+    padding: 8px;
+    overflow: auto;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.72);
+    font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: pre-wrap;
+  }
+  article + article {
+    margin-top: 10px;
+  }
+`
 
 async function captureTabScreenshot(): Promise<string> {
   const response = (await chrome.runtime.sendMessage({
@@ -1403,6 +1678,7 @@ function clearCaptionBoxes(target?: 'original' | 'translation'): void {
   if (target !== 'original') {
     translationEl.replaceChildren()
   }
+  paintStealthHud()
 }
 
 function requestCaptionClear(target?: 'original' | 'translation'): void {
@@ -1442,11 +1718,11 @@ async function openCaptionWindow(): Promise<void> {
 
 function wakeOverlayIfIdle(): void {
   if (Date.now() - lastOverlayWakeAt < 8000) {
-    lastOverlayWakeAt = Date.now()
     return
   }
   lastOverlayWakeAt = Date.now()
   void sendOverlay({ type: MessageType.EnableOverlay, direction: translateDirection })
+  replayOverlayQuestions()
 }
 
 function startOverlayKeepAlive(): void {
@@ -1458,6 +1734,7 @@ function startOverlayKeepAlive(): void {
     }
     lastOverlayWakeAt = Date.now()
     void sendOverlay({ type: MessageType.EnableOverlay, direction: translateDirection })
+    replayOverlayQuestions()
   }, 8000)
 }
 
@@ -2015,6 +2292,7 @@ function appendCaption(host: HTMLElement, text: string): void {
   if (stick) {
     followBottom(host)
   }
+  paintStealthHud()
 }
 
 function clearWave(): void {

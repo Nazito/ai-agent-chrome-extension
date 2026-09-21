@@ -276,15 +276,35 @@ function parseScreenTask(raw: string): ScreenTask {
   if (!parsed || Array.isArray(parsed)) {
     return empty
   }
-  const hasTask = parsed.hasTask === true || parsed.hasTask === 'true'
-  if (!hasTask) {
+  const title = sanitizeScreenProse(typeof parsed.title === 'string' ? parsed.title : '', 120)
+  const task = sanitizeScreenProse(
+    typeof parsed.task === 'string'
+      ? parsed.task
+      : typeof parsed.question === 'string'
+        ? parsed.question
+        : '',
+    600,
+  )
+  const answerFallback =
+    typeof parsed.answer === 'string'
+      ? parsed.answer
+      : typeof parsed.solution === 'string'
+        ? parsed.solution
+        : ''
+  let answerEn = sanitizeScreenProse(typeof parsed.answerEn === 'string' ? parsed.answerEn : '', 1200)
+  let answerRu = sanitizeScreenProse(typeof parsed.answerRu === 'string' ? parsed.answerRu : '', 1200)
+  if (!answerEn && !answerRu && answerFallback) {
+    if (looksRussian(answerFallback)) {
+      answerRu = sanitizeScreenProse(answerFallback, 1200)
+    } else {
+      answerEn = sanitizeScreenProse(answerFallback, 1200)
+    }
+  }
+  const code = sanitizeScreenCode(typeof parsed.code === 'string' ? parsed.code : '')
+  const explicitNo = parsed.hasTask === false || parsed.hasTask === 'false'
+  if (explicitNo && !answerEn && !answerRu && !code) {
     return empty
   }
-  const title = sanitizeScreenProse(typeof parsed.title === 'string' ? parsed.title : '', 120)
-  const task = sanitizeScreenProse(typeof parsed.task === 'string' ? parsed.task : '', 600)
-  const answerEn = sanitizeScreenProse(typeof parsed.answerEn === 'string' ? parsed.answerEn : '', 1200)
-  const answerRu = sanitizeScreenProse(typeof parsed.answerRu === 'string' ? parsed.answerRu : '', 1200)
-  const code = sanitizeScreenCode(typeof parsed.code === 'string' ? parsed.code : '')
   if (!title && !task && !answerEn && !answerRu && !code) {
     return empty
   }
