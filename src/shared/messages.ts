@@ -31,6 +31,7 @@ export const MessageType = {
   ShowScanRegion: 'SHOW_SCAN_REGION',
   HideScanRegion: 'HIDE_SCAN_REGION',
   ShowScanSpinner: 'SHOW_SCAN_SPINNER',
+  SetOverlayStealth: 'SET_OVERLAY_STEALTH',
   RequestScanCapture: 'REQUEST_SCAN_CAPTURE',
   ScanRegionCapture: 'SCAN_REGION_CAPTURE',
   ScanRegionCancel: 'SCAN_REGION_CANCEL',
@@ -94,6 +95,7 @@ export type ExtensionMessage =
   | { type: typeof MessageType.ShowScanRegion }
   | { type: typeof MessageType.HideScanRegion }
   | { type: typeof MessageType.ShowScanSpinner }
+  | { type: typeof MessageType.SetOverlayStealth; stealth: boolean }
   | { type: typeof MessageType.RequestScanCapture }
   | {
       type: typeof MessageType.ScanRegionCapture

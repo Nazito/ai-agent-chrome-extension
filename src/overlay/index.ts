@@ -1,4 +1,4 @@
-type HudHandle = { teardown: () => void; enable: () => void; hide: () => void }
+type HudHandle = { teardown: () => void; enable: () => void; hide: () => void; setStealth: (value: boolean) => void }
 type PlaqueKind = 'original' | 'translation'
 
 void (function bootJarvisOverlay(): void {
@@ -9,7 +9,7 @@ if (!chrome?.i18n || typeof chrome.i18n.getMessage !== 'function') {
   return
 }
 const overlayWindow = window as Window & { __jarvisHud?: HudHandle; __jarvisHudRev?: number }
-const HUD_REV = 30
+const HUD_REV = 33
 const STYLE_ID = 'jarvis-hud-style'
 const HOST_IDS = {
   original: 'jarvis-plaque-original',
@@ -23,13 +23,21 @@ const SCAN_MIN_W = 160
 const SCAN_MIN_H = 120
 let sidePanelOpen = false
 let sidePanelWidth = 360
+let overlayStealth = false
 const plaqueSizes: Record<string, { w: number; h: number; x?: number; y?: number }> = {}
 let plaqueSaveTimer = 0
 
-void chrome.storage.local.get({ sidePanelOpen: false, sidePanelWidth: 360, plaqueSizes: {} }).then((stored) => {
+void chrome.storage.local.get({
+  sidePanelOpen: false,
+  sidePanelWidth: 360,
+  plaqueSizes: {},
+  overlayStealth: false,
+}).then((stored) => {
   sidePanelOpen = stored.sidePanelOpen === true
   sidePanelWidth = Number(stored.sidePanelWidth) || 360
+  overlayStealth = stored.overlayStealth === true
   Object.assign(plaqueSizes, stored.plaqueSizes ?? {})
+  overlayWindow.__jarvisHud?.setStealth(overlayStealth)
   clampMountedPlaques()
 })
 chrome.storage.onChanged.addListener((changes, area) => {
@@ -44,6 +52,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
   if (changes.sidePanelWidth) {
     sidePanelWidth = Number(changes.sidePanelWidth.newValue) || 360
+  }
+  if (changes.overlayStealth) {
+    overlayStealth = changes.overlayStealth.newValue === true
+    overlayWindow.__jarvisHud?.setStealth(overlayStealth)
   }
   clampMountedPlaques()
 })
@@ -333,10 +345,17 @@ function startOverlay(): HudHandle {
     answerRu?: string
     code?: string
     error?: string
+    stealth?: boolean
   }): void {
+    if (message.type === 'SET_OVERLAY_STEALTH') {
+      overlayStealth = message.stealth === true
+      applyStealth()
+      return
+    }
     if (message.type === 'ENABLE_OVERLAY') {
       closedOriginal = false
       closedTranslation = false
+      closedQuestions = false
       visible = true
       applyDirection(message.direction)
       render()
@@ -348,8 +367,9 @@ function startOverlay(): HudHandle {
       return
     }
     if (message.type === 'SHOW_OVERLAY_CAPTION') {
-      if (!sidePanelOpen && !visible) {
-        return
+      if (!visible) {
+        closedOriginal = false
+        closedTranslation = false
       }
       if (closedOriginal && closedTranslation) {
         return
@@ -383,10 +403,8 @@ function startOverlay(): HudHandle {
       return
     }
     if (message.type === 'SHOW_OVERLAY_QUESTION' && message.id && message.question) {
-      if (!sidePanelOpen && !visible) {
-        return
-      }
       closedQuestions = false
+      visible = true
       questionsPlaque.upsert(message.id, {
         question: message.question,
         questionEn: message.questionEn,
@@ -410,9 +428,8 @@ function startOverlay(): HudHandle {
       return
     }
     if (message.type === 'SHOW_OVERLAY_ANSWER' && message.id) {
-      if (!sidePanelOpen && !visible) {
-        return
-      }
+      closedQuestions = false
+      visible = true
       questionsPlaque.setAnswer(message.id, {
         answer: message.answer,
         answerEn: message.answerEn,
@@ -441,6 +458,10 @@ function startOverlay(): HudHandle {
       return
     }
     if (message.type === 'SHOW_SCAN_SPINNER') {
+      if (overlayStealth) {
+        scanPlaque.setBusy(false)
+        return
+      }
       mount()
       scanPlaque.setBusy(true)
       return
@@ -484,11 +505,20 @@ function startOverlay(): HudHandle {
     render()
   }
 
+  function applyStealth(): void {
+    if (overlayStealth) {
+      scanPlaque.setBusy(false)
+    }
+    render()
+  }
+
   function render(): void {
     mount()
-    originalPlaque.setOpen(visible && !closedOriginal)
-    translationPlaque.setOpen(visible && !closedTranslation)
-    questionsPlaque.setOpen(visible && !closedQuestions && questionsPlaque.ids().length > 0)
+    originalPlaque.setOpen(visible && !closedOriginal && !overlayStealth)
+    translationPlaque.setOpen(visible && !closedTranslation && !overlayStealth)
+    questionsPlaque.setOpen(
+      visible && !closedQuestions && !overlayStealth && questionsPlaque.ids().length > 0,
+    )
     if (originals.length === 0) {
       originalPlaque.showHint(sourceHint())
     }
@@ -522,8 +552,13 @@ function startOverlay(): HudHandle {
     enable() {
       closedOriginal = false
       closedTranslation = false
+      closedQuestions = false
       visible = true
       render()
+    },
+    setStealth(value: boolean) {
+      overlayStealth = value
+      applyStealth()
     },
     hide() {
       hideHud()
@@ -1617,9 +1652,22 @@ function createQuestionsPlaque(options: {
       paint()
     },
     setAnswer(id, payload) {
-      const item = items.find((entry) => entry.id === id)
+      let item = items.find((entry) => entry.id === id)
       if (!item) {
-        return
+        item = {
+          id,
+          question: payload.answer || payload.answerEn || payload.answerRu || '',
+          questionEn: payload.answerEn ?? '',
+          questionRu: payload.answerRu ?? '',
+          answer: '',
+          answerEn: '',
+          answerRu: '',
+          code: '',
+          error: '',
+          loading: false,
+          open: true,
+        }
+        items.push(item)
       }
       item.loading = false
       item.open = true

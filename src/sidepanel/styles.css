@@ -353,6 +353,17 @@ button:disabled {
   background: rgba(var(--accent-rgb), 0.18);
 }
 
+#stealth-toggle.active {
+  background: rgba(var(--gold-rgb), 0.16);
+  color: var(--gold);
+  border-color: rgba(var(--gold-rgb), 0.55);
+}
+
+#stealth-toggle.active:hover:not(:disabled) {
+  background: rgba(var(--gold-rgb), 0.24);
+  color: var(--gold);
+}
+
 #sidebar-captions-toggle.active {
   background: rgba(var(--gold-rgb), 0.16);
   color: var(--gold);
