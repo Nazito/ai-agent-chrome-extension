@@ -5,7 +5,9 @@ import {
   extractQuestions,
   isCutQuestion,
   looksRussian,
+  lookupDirection,
   transcribeAudio,
+  translateLookup,
   translateText,
 } from '../shared/llm.js'
 import {
@@ -74,6 +76,9 @@ const badgeInput = document.getElementById('badge-input') as HTMLInputElement
 const tagFieldEl = document.getElementById('tag-field')
 const tagMenuEl = document.getElementById('tag-menu')
 const tagSelectEl = document.getElementById('tag-select')
+const wordLookupInput = document.getElementById('word-lookup-input') as HTMLInputElement
+const wordLookupResult = document.getElementById('word-lookup-result')!
+const wordLookupDir = document.getElementById('word-lookup-dir')!
 
 const PRESET_BADGE_MESSAGES: Record<string, string> = {
   'job-interview': 'badgeJobInterview',
@@ -135,6 +140,8 @@ let scanCommandBusy = false
 let overlayStealth = false
 let stealthHud: Window | null = null
 let stealthBusy = false
+let wordLookupTimer = 0
+let wordLookupToken = 0
 let hintLockUntil = 0
 let silentSince = 0
 let sidePanelClosing = false
@@ -203,6 +210,9 @@ if (badgesLabel) {
 if (badgeInput) {
   badgeInput.placeholder = chrome.i18n.getMessage('badgeAddPlaceholder')
 }
+document.getElementById('word-lookup-label')!.textContent = chrome.i18n.getMessage('wordLookupLabel')
+wordLookupInput.placeholder = chrome.i18n.getMessage('wordLookupPlaceholder')
+paintWordLookupDir('')
 if (badgesEl) {
   paintBadges()
 }
@@ -334,6 +344,22 @@ clearOriginal.addEventListener('click', () => {
 
 clearTranslation.addEventListener('click', () => {
   requestCaptionClear('translation')
+})
+
+wordLookupInput.addEventListener('input', () => {
+  paintWordLookupDir(wordLookupInput.value)
+  window.clearTimeout(wordLookupTimer)
+  wordLookupTimer = window.setTimeout(() => {
+    void runWordLookup()
+  }, 280)
+})
+wordLookupInput.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') {
+    return
+  }
+  event.preventDefault()
+  window.clearTimeout(wordLookupTimer)
+  void runWordLookup()
 })
 
 apiKeyInput.addEventListener('change', persistApiKey)
@@ -1779,6 +1805,66 @@ function persistApiKey(): void {
 
 function currentKey(): string {
   return settings.keys[settings.provider]?.trim() ?? ''
+}
+
+function paintWordLookupDir(text: string): void {
+  const direction = lookupDirection(text)
+  wordLookupDir.textContent = chrome.i18n.getMessage(
+    direction === 'ru-en' ? 'wordLookupRuEn' : 'wordLookupEnRu',
+  )
+}
+
+async function runWordLookup(): Promise<void> {
+  const text = wordLookupInput.value.trim()
+  paintWordLookupDir(text)
+  if (!text) {
+    wordLookupResult.textContent = ''
+    wordLookupResult.className = 'word-lookup-result'
+    return
+  }
+  const token = ++wordLookupToken
+  wordLookupResult.textContent = '…'
+  wordLookupResult.className = 'word-lookup-result muted'
+  try {
+    const translated = await translateLookup(text)
+    if (token !== wordLookupToken) {
+      return
+    }
+    if (!translated) {
+      wordLookupResult.textContent = formatLookupIssue('empty')
+      wordLookupResult.className = 'word-lookup-result muted'
+      return
+    }
+    wordLookupResult.textContent = translated
+    wordLookupResult.className = 'word-lookup-result'
+  } catch (error) {
+    if (token !== wordLookupToken) {
+      return
+    }
+    wordLookupResult.textContent = formatLookupIssue(classifyApiError(error), error)
+    wordLookupResult.className = 'word-lookup-result error'
+  }
+}
+
+function formatLookupIssue(kind: ApiFailureKind | 'empty', error?: unknown): string {
+  const suffix =
+    kind === 'empty'
+      ? 'Empty'
+      : kind === 'badKey'
+        ? 'BadKey'
+        : kind === 'quota'
+          ? 'Quota'
+          : kind === 'rateLimit'
+            ? 'RateLimit'
+            : kind === 'modelGone'
+              ? 'ModelGone'
+              : kind === 'network'
+                ? 'Network'
+                : 'Unknown'
+  const template = chrome.i18n.getMessage(`issueLookup${suffix}`) || chrome.i18n.getMessage('issueLookupUnknown')
+  return template
+    .replaceAll('{provider}', chrome.i18n.getMessage('googleTranslateName') || 'Google Translate')
+    .replaceAll('{detail}', error instanceof Error ? error.message : '')
 }
 
 function providerTitle(): string {

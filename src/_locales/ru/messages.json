@@ -239,6 +239,21 @@
   "stealthPipKicker": {
     "message": "Только ты"
   },
+  "wordLookupLabel": {
+    "message": "Слово"
+  },
+  "wordLookupPlaceholder": {
+    "message": "Английский или русский"
+  },
+  "wordLookupEnRu": {
+    "message": "EN → RU"
+  },
+  "wordLookupRuEn": {
+    "message": "RU → EN"
+  },
+  "googleTranslateName": {
+    "message": "Google Переводчик"
+  },
   "screenScan": {
     "message": "Сканировать вкладку на задачу"
   },
@@ -400,6 +415,27 @@
   },
   "issueTranslateUnknown": {
     "message": "Английский есть, русского перевода нет: {provider} не смог перевести. {detail}"
+  },
+  "issueLookupBadKey": {
+    "message": "{provider} не принял ключ. Проверьте его ниже."
+  },
+  "issueLookupQuota": {
+    "message": "У {provider} закончилась квота. Смените провайдера ниже."
+  },
+  "issueLookupRateLimit": {
+    "message": "{provider} временно ограничил запросы. Подождите несколько секунд."
+  },
+  "issueLookupModelGone": {
+    "message": "У {provider} нет рабочей модели перевода."
+  },
+  "issueLookupNetwork": {
+    "message": "Нет связи с {provider}."
+  },
+  "issueLookupEmpty": {
+    "message": "{provider} вернул пустой перевод."
+  },
+  "issueLookupUnknown": {
+    "message": "{provider} не смог перевести. {detail}"
   },
   "issueOverlayHost": {
     "message": "Плашка с субтитрами не на вкладке созвона: Chrome не пускает расширение на страницу. chrome://extensions → Jarvis → Подробнее → Доступ к сайтам → На всех сайтах, затем обновите вкладку созвона."
