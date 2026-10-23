@@ -308,6 +308,9 @@
   "issueScreenNetwork": {
     "message": "Could not read the screen: no connection to {provider}."
   },
+  "issueScreenBlocked": {
+    "message": "Could not read the screen: {provider} blocked this network. Turn off VPN or switch to Gemini."
+  },
   "issueScreenUnknown": {
     "message": "Could not read the screen: {provider} returned an error. {detail}"
   },

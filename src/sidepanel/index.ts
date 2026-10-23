@@ -1137,7 +1137,7 @@ function formatAnswerIssue(kind: ApiFailureKind | 'empty', error?: unknown): str
             ? 'RateLimit'
             : kind === 'modelGone'
               ? 'ModelGone'
-              : kind === 'network'
+              : kind === 'network' || kind === 'blocked'
                 ? 'Network'
                 : 'Unknown'
   const template =
@@ -1679,7 +1679,9 @@ function formatScreenIssue(kind: ApiFailureKind, error?: unknown): string {
             ? 'ModelGone'
             : kind === 'network'
               ? 'Network'
-              : 'Unknown'
+              : kind === 'blocked'
+                ? 'Blocked'
+                : 'Unknown'
   const template =
     chrome.i18n.getMessage(`issueScreen${suffix}`) || chrome.i18n.getMessage('issueScreenUnknown')
   return template
@@ -1898,7 +1900,7 @@ function formatLookupIssue(kind: ApiFailureKind | 'empty', error?: unknown): str
             ? 'RateLimit'
             : kind === 'modelGone'
               ? 'ModelGone'
-              : kind === 'network'
+              : kind === 'network' || kind === 'blocked'
                 ? 'Network'
                 : 'Unknown'
   const template = chrome.i18n.getMessage(`issueLookup${suffix}`) || chrome.i18n.getMessage('issueLookupUnknown')
@@ -1928,7 +1930,7 @@ function llmIssueKey(stage: 'transcribe' | 'translate', kind: ApiFailureKind | '
           ? 'RateLimit'
           : kind === 'modelGone'
             ? 'ModelGone'
-            : kind === 'network'
+            : kind === 'network' || kind === 'blocked'
               ? 'Network'
               : 'Unknown'
   return stage === 'transcribe' ? `issueTranscribe${suffix}` : `issueTranslate${suffix}`

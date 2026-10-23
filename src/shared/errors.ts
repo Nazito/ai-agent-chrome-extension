@@ -1,4 +1,4 @@
-export type ApiFailureKind = 'badKey' | 'quota' | 'rateLimit' | 'modelGone' | 'network' | 'unknown'
+export type ApiFailureKind = 'badKey' | 'quota' | 'rateLimit' | 'modelGone' | 'network' | 'blocked' | 'unknown'
 
 export class NamedError extends Error {
   constructor(
@@ -50,6 +50,14 @@ export function classifyApiError(error: unknown): ApiFailureKind {
     /\b404\b/.test(text)
   ) {
     return 'modelGone'
+  }
+  if (
+    text.includes('access denied') ||
+    text.includes('network settings') ||
+    text.includes('forbidden') ||
+    /\b403\b/.test(text)
+  ) {
+    return 'blocked'
   }
   if (
     text.includes('failed to fetch') ||

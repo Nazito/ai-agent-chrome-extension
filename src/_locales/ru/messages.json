@@ -308,6 +308,9 @@
   "issueScreenNetwork": {
     "message": "Не удалось разобрать экран: нет связи с {provider}."
   },
+  "issueScreenBlocked": {
+    "message": "Не удалось разобрать экран: {provider} заблокировал эту сеть. Отключите VPN или переключитесь на Gemini."
+  },
   "issueScreenUnknown": {
     "message": "Не удалось разобрать экран: {provider} вернул ошибку. {detail}"
   },

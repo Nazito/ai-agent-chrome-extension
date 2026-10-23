@@ -143,7 +143,11 @@ export async function analyzeScreenTask(
   imageDataUrl: string,
   context: AnswerContext = {},
 ): Promise<ScreenTask> {
-  const compact = await compactScreenshot(imageDataUrl)
+  const compact = await compactScreenshot(imageDataUrl, {
+    maxSide: provider === 'groq' ? 896 : 1280,
+    quality: provider === 'groq' ? 0.52 : 0.72,
+    maxChars: provider === 'groq' ? 120_000 : 220_000,
+  })
   const raw = await chatVision(
     provider,
     apiKey,
@@ -227,7 +231,7 @@ function chatVision(
       apiKey,
       text,
       prompt,
-      ['qwen/qwen3.8-27b', 'openai/gpt-oss-20b'],
+      ['meta-llama/llama-4-scout-17b-16e-instruct', 'qwen/qwen3.8-27b'],
       true,
       imageDataUrl,
     )
@@ -508,7 +512,6 @@ async function chatOpenAiCompatible(
           body.max_tokens = 1600
           if (base.includes('api.groq.com')) {
             body.reasoning_effort = 'none'
-            body.reasoning_format = 'hidden'
           }
         } else if (options?.maxTokens) {
           body.max_tokens = options.maxTokens
@@ -522,7 +525,7 @@ async function chatOpenAiCompatible(
         let response = await postChatCompletion(base, apiKey, body)
         if (!response.ok) {
           lastError = await readError(response)
-          if (body.reasoning_effort && /reasoning|thinking/i.test(lastError)) {
+          if (body.reasoning_effort && /reasoning|thinking|unknown argument|invalid/i.test(lastError)) {
             delete body.reasoning_effort
             delete body.reasoning_format
             response = await postChatCompletion(base, apiKey, body)
@@ -689,16 +692,21 @@ async function postChatCompletion(
   })
 }
 
-async function compactScreenshot(dataUrl: string): Promise<string> {
+async function compactScreenshot(
+  dataUrl: string,
+  options?: { maxSide?: number; quality?: number; maxChars?: number },
+): Promise<string> {
   if (typeof Image === 'undefined' || typeof document === 'undefined') {
     return dataUrl
   }
+  const maxSide = options?.maxSide ?? 1280
+  const quality = options?.quality ?? 0.72
+  const maxChars = options?.maxChars ?? 220_000
   return new Promise((resolve) => {
     const image = new Image()
     image.onload = () => {
-      const maxSide = 1280
       const scale = Math.min(1, maxSide / Math.max(image.width, image.height))
-      if (scale >= 0.98 && dataUrl.length < 220_000) {
+      if (!options && scale >= 0.98 && dataUrl.length < maxChars) {
         resolve(dataUrl)
         return
       }
@@ -711,7 +719,7 @@ async function compactScreenshot(dataUrl: string): Promise<string> {
         return
       }
       ctx.drawImage(image, 0, 0, canvas.width, canvas.height)
-      resolve(canvas.toDataURL('image/jpeg', 0.72))
+      resolve(canvas.toDataURL('image/jpeg', quality))
     }
     image.onerror = () => resolve(dataUrl)
     image.src = dataUrl
@@ -750,6 +758,10 @@ function isRetryableModelError(message: string): boolean {
     lower.includes('not found') ||
     lower.includes('not supported') ||
     lower.includes('model_not_found') ||
+    lower.includes('do not have access') ||
+    lower.includes('access denied') ||
+    lower.includes('forbidden') ||
+    /\b403\b/.test(lower) ||
     /\b404\b/.test(lower)
   )
 }
