@@ -159,9 +159,9 @@ chrome.runtime.onMessage.addListener(
           translateDirection = message.direction
         }
         if (overlayEnabled) {
-          await pingOverlay()
+          await pingOverlay(message.reopen === true)
         } else {
-          await enableOverlay()
+          await enableOverlay(message.reopen === true)
         }
       })
       sendResponse({ ok: true })
@@ -452,18 +452,18 @@ function persistOverlaySession(): void {
     .catch(() => undefined)
 }
 
-async function enableOverlay(): Promise<void> {
+async function enableOverlay(reopen = false): Promise<void> {
   overlayEnabled = true
   overlayTabIds = new Set(await overlayTargets())
   persistOverlaySession()
   await Promise.all([...overlayTabIds].map((tabId) => injectOverlay(tabId).catch(() => undefined)))
-  await enqueueOverlay(enableOverlayMessage())
+  await enqueueOverlay(enableOverlayMessage(reopen))
 }
 
-async function pingOverlay(): Promise<void> {
+async function pingOverlay(reopen = false): Promise<void> {
   overlayEnabled = true
   persistOverlaySession()
-  await enqueueOverlay(enableOverlayMessage())
+  await enqueueOverlay(enableOverlayMessage(reopen))
 }
 
 async function disableOverlay(): Promise<void> {
@@ -737,8 +737,8 @@ function overlayScore(tab: chrome.tabs.Tab): number {
   return score
 }
 
-function enableOverlayMessage(): ExtensionMessage {
-  return { type: MessageType.EnableOverlay, direction: translateDirection }
+function enableOverlayMessage(reopen = false): ExtensionMessage {
+  return { type: MessageType.EnableOverlay, direction: translateDirection, reopen }
 }
 
 async function publishPlaqueCount(): Promise<void> {
@@ -776,7 +776,7 @@ async function openCaptionWindow(): Promise<void> {
     overlayTabIds.add(tabId)
     try {
       await injectOverlay(tabId)
-      await sendToFrame(tabId, enableOverlayMessage()).catch(() => undefined)
+      await sendToFrame(tabId, enableOverlayMessage(true)).catch(() => undefined)
       injected += 1
       if (overlayScore(tab) >= 8) {
         injectedCall += 1

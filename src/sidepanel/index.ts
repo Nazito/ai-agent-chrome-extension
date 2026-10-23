@@ -775,7 +775,7 @@ function grantMicrophoneInPopup(): Promise<void> {
 
 function sendOverlay(
   message:
-    | { type: typeof MessageType.EnableOverlay; direction?: TranslateDirection }
+    | { type: typeof MessageType.EnableOverlay; direction?: TranslateDirection; reopen?: boolean }
     | { type: typeof MessageType.DisableOverlay }
     | { type: typeof MessageType.ShowOverlayCaption; original: string; translation: string }
     | { type: typeof MessageType.ClearOverlayCaption; target?: 'original' | 'translation' }

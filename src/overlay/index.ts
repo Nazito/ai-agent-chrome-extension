@@ -1,4 +1,10 @@
-type HudHandle = { teardown: () => void; enable: () => void; hide: () => void; setStealth: (value: boolean) => void }
+type HudHandle = {
+  teardown: () => void
+  enable: () => void
+  hide: () => void
+  setStealth: (value: boolean) => void
+  refresh: () => void
+}
 type PlaqueKind = 'original' | 'translation'
 
 void (function bootJarvisOverlay(): void {
@@ -9,7 +15,7 @@ if (!chrome?.i18n || typeof chrome.i18n.getMessage !== 'function') {
   return
 }
 const overlayWindow = window as Window & { __jarvisHud?: HudHandle; __jarvisHudRev?: number }
-const HUD_REV = 33
+const HUD_REV = 34
 const STYLE_ID = 'jarvis-hud-style'
 const HOST_IDS = {
   original: 'jarvis-plaque-original',
@@ -24,6 +30,8 @@ const SCAN_MIN_H = 120
 let sidePanelOpen = false
 let sidePanelWidth = 360
 let overlayStealth = false
+let userClosedOriginal = false
+let userClosedTranslation = false
 const plaqueSizes: Record<string, { w: number; h: number; x?: number; y?: number }> = {}
 let plaqueSaveTimer = 0
 
@@ -32,14 +40,26 @@ void chrome.storage.local.get({
   sidePanelWidth: 360,
   plaqueSizes: {},
   overlayStealth: false,
+  overlayClosedOriginal: false,
+  overlayClosedTranslation: false,
 }).then((stored) => {
   sidePanelOpen = stored.sidePanelOpen === true
   sidePanelWidth = Number(stored.sidePanelWidth) || 360
   overlayStealth = stored.overlayStealth === true
+  userClosedOriginal = stored.overlayClosedOriginal === true
+  userClosedTranslation = stored.overlayClosedTranslation === true
   Object.assign(plaqueSizes, stored.plaqueSizes ?? {})
   overlayWindow.__jarvisHud?.setStealth(overlayStealth)
+  overlayWindow.__jarvisHud?.refresh()
   clampMountedPlaques()
 })
+
+function persistUserClosed(): void {
+  void chrome.storage.local.set({
+    overlayClosedOriginal: userClosedOriginal,
+    overlayClosedTranslation: userClosedTranslation,
+  })
+}
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') {
     return
@@ -72,8 +92,6 @@ function startOverlay(): HudHandle {
   let lastOriginal = ''
   let visible = false
   let direction: 'en-ru' | 'ru-en' = 'en-ru'
-  let closedOriginal = false
-  let closedTranslation = false
   let closedQuestions = false
   let meter = 0
   let lastStatus = ''
@@ -191,7 +209,8 @@ function startOverlay(): HudHandle {
     kind: 'original',
     title: chrome.i18n.getMessage('originalLabel') || 'English',
     onClose() {
-      closedOriginal = true
+      userClosedOriginal = true
+      persistUserClosed()
       render()
       reportStatus()
       void chrome.runtime
@@ -209,7 +228,8 @@ function startOverlay(): HudHandle {
     kind: 'translation',
     title: chrome.i18n.getMessage('translationLabel') || 'Русский',
     onClose() {
-      closedTranslation = true
+      userClosedTranslation = true
+      persistUserClosed()
       render()
       reportStatus()
       void chrome.runtime
@@ -316,8 +336,6 @@ function startOverlay(): HudHandle {
     originals.length = 0
     translations.length = 0
     lastOriginal = ''
-    closedOriginal = true
-    closedTranslation = true
     closedQuestions = true
     originalPlaque.clear()
     translationPlaque.clear()
@@ -346,6 +364,7 @@ function startOverlay(): HudHandle {
     code?: string
     error?: string
     stealth?: boolean
+    reopen?: boolean
   }): void {
     if (message.type === 'SET_OVERLAY_STEALTH') {
       overlayStealth = message.stealth === true
@@ -353,9 +372,12 @@ function startOverlay(): HudHandle {
       return
     }
     if (message.type === 'ENABLE_OVERLAY') {
-      closedOriginal = false
-      closedTranslation = false
-      closedQuestions = false
+      if (message.reopen) {
+        userClosedOriginal = false
+        userClosedTranslation = false
+        closedQuestions = false
+        persistUserClosed()
+      }
       visible = true
       applyDirection(message.direction)
       render()
@@ -367,11 +389,7 @@ function startOverlay(): HudHandle {
       return
     }
     if (message.type === 'SHOW_OVERLAY_CAPTION') {
-      if (!visible) {
-        closedOriginal = false
-        closedTranslation = false
-      }
-      if (closedOriginal && closedTranslation) {
+      if (userClosedOriginal && userClosedTranslation) {
         return
       }
       visible = true
@@ -393,11 +411,12 @@ function startOverlay(): HudHandle {
     }
     if (message.type === 'CLOSE_OVERLAY_PLAQUE') {
       if (message.target === 'original') {
-        closedOriginal = true
+        userClosedOriginal = true
       }
       if (message.target === 'translation') {
-        closedTranslation = true
+        userClosedTranslation = true
       }
+      persistUserClosed()
       render()
       reportStatus()
       return
@@ -514,8 +533,8 @@ function startOverlay(): HudHandle {
 
   function render(): void {
     mount()
-    originalPlaque.setOpen(visible && !closedOriginal && !overlayStealth)
-    translationPlaque.setOpen(visible && !closedTranslation && !overlayStealth)
+    originalPlaque.setOpen(visible && !userClosedOriginal && !overlayStealth)
+    translationPlaque.setOpen(visible && !userClosedTranslation && !overlayStealth)
     questionsPlaque.setOpen(
       visible && !closedQuestions && !overlayStealth && questionsPlaque.ids().length > 0,
     )
@@ -529,8 +548,8 @@ function startOverlay(): HudHandle {
   }
 
   function reportStatus(): void {
-    const original = visible && !closedOriginal
-    const translation = visible && !closedTranslation
+    const original = visible && !userClosedOriginal
+    const translation = visible && !userClosedTranslation
     const key = `${original}:${translation}`
     if (key === lastStatus) {
       return
@@ -550,9 +569,6 @@ function startOverlay(): HudHandle {
 
   return {
     enable() {
-      closedOriginal = false
-      closedTranslation = false
-      closedQuestions = false
       visible = true
       render()
     },
@@ -562,6 +578,9 @@ function startOverlay(): HudHandle {
     },
     hide() {
       hideHud()
+    },
+    refresh() {
+      render()
     },
     teardown() {
       chrome.runtime.onMessage.removeListener(onRuntimeMessage)

@@ -55,7 +55,7 @@ export type ExtensionMessage =
       mimeType: string
       rms: number
     }
-  | { type: typeof MessageType.EnableOverlay; direction?: 'en-ru' | 'ru-en' }
+  | { type: typeof MessageType.EnableOverlay; direction?: 'en-ru' | 'ru-en'; reopen?: boolean }
   | { type: typeof MessageType.DisableOverlay }
   | { type: typeof MessageType.ShowOverlayCaption; original: string; translation: string }
   | { type: typeof MessageType.ClearOverlayCaption; target?: 'original' | 'translation' }
