@@ -32,7 +32,9 @@ export function classifyApiError(error: unknown): ApiFailureKind {
     text.includes('insufficient_quota') ||
     text.includes('exceeded your current quota') ||
     text.includes('billing') ||
-    text.includes('quota exceeded')
+    text.includes('quota exceeded') ||
+    text.includes('resource_exhausted') ||
+    text.includes('resource exhausted')
   ) {
     return 'quota'
   }
@@ -44,7 +46,8 @@ export function classifyApiError(error: unknown): ApiFailureKind {
     text.includes('do not have access') ||
     text.includes('model_not_found') ||
     text.includes('model not found') ||
-    text.includes('deprecat')
+    text.includes('deprecat') ||
+    /\b404\b/.test(text)
   ) {
     return 'modelGone'
   }

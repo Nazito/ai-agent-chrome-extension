@@ -1,3 +1,4 @@
+import { translateViaGoogle } from './googleTranslate.js'
 import { type ProviderId, type TranslateDirection } from './storage.js'
 
 export type AnswerContext = {
@@ -58,6 +59,14 @@ export async function translateText(
 ): Promise<string> {
   const prompt = translatePrompt(direction)
   return chatText(provider, apiKey, text, prompt)
+}
+
+export function lookupDirection(text: string): TranslateDirection {
+  return looksRussian(text) ? 'ru-en' : 'en-ru'
+}
+
+export async function translateLookup(text: string): Promise<string> {
+  return translateViaGoogle(text, lookupDirection(text))
 }
 
 const EXTRACT_QUESTIONS_PROMPT = `You extract questions from live meeting speech.
@@ -174,18 +183,35 @@ function chatText(
   text: string,
   prompt: string,
   json = false,
+  options?: { fast?: boolean; maxTokens?: number },
 ): Promise<string> {
   if (provider === 'groq') {
-    return chatOpenAiCompatible('https://api.groq.com/openai/v1', apiKey, text, prompt, [
-      'openai/gpt-oss-20b',
-      'qwen/qwen3.6-27b',
-      'openai/gpt-oss-120b',
-    ], json)
+    return chatOpenAiCompatible(
+      'https://api.groq.com/openai/v1',
+      apiKey,
+      text,
+      prompt,
+      options?.fast
+        ? ['openai/gpt-oss-20b', 'qwen/qwen3.8-27b']
+        : ['openai/gpt-oss-20b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-120b'],
+      json,
+      undefined,
+      options,
+    )
   }
   if (provider === 'gemini') {
-    return geminiGenerate(apiKey, undefined, `${prompt}\n\n${text}`)
+    return geminiGenerate(apiKey, undefined, `${prompt}\n\n${text}`, options)
   }
-  return chatOpenAiCompatible('https://api.openai.com/v1', apiKey, text, prompt, ['gpt-4o-mini'], json)
+  return chatOpenAiCompatible(
+    'https://api.openai.com/v1',
+    apiKey,
+    text,
+    prompt,
+    ['gpt-4o-mini'],
+    json,
+    undefined,
+    options,
+  )
 }
 
 function chatVision(
@@ -201,7 +227,7 @@ function chatVision(
       apiKey,
       text,
       prompt,
-      ['qwen/qwen3.8-27b', 'qwen/qwen3.6-27b'],
+      ['qwen/qwen3.8-27b', 'openai/gpt-oss-20b'],
       true,
       imageDataUrl,
     )
@@ -276,15 +302,35 @@ function parseScreenTask(raw: string): ScreenTask {
   if (!parsed || Array.isArray(parsed)) {
     return empty
   }
-  const hasTask = parsed.hasTask === true || parsed.hasTask === 'true'
-  if (!hasTask) {
+  const title = sanitizeScreenProse(typeof parsed.title === 'string' ? parsed.title : '', 120)
+  const task = sanitizeScreenProse(
+    typeof parsed.task === 'string'
+      ? parsed.task
+      : typeof parsed.question === 'string'
+        ? parsed.question
+        : '',
+    600,
+  )
+  const answerFallback =
+    typeof parsed.answer === 'string'
+      ? parsed.answer
+      : typeof parsed.solution === 'string'
+        ? parsed.solution
+        : ''
+  let answerEn = sanitizeScreenProse(typeof parsed.answerEn === 'string' ? parsed.answerEn : '', 1200)
+  let answerRu = sanitizeScreenProse(typeof parsed.answerRu === 'string' ? parsed.answerRu : '', 1200)
+  if (!answerEn && !answerRu && answerFallback) {
+    if (looksRussian(answerFallback)) {
+      answerRu = sanitizeScreenProse(answerFallback, 1200)
+    } else {
+      answerEn = sanitizeScreenProse(answerFallback, 1200)
+    }
+  }
+  const code = sanitizeScreenCode(typeof parsed.code === 'string' ? parsed.code : '')
+  const explicitNo = parsed.hasTask === false || parsed.hasTask === 'false'
+  if (explicitNo && !answerEn && !answerRu && !code) {
     return empty
   }
-  const title = sanitizeScreenProse(typeof parsed.title === 'string' ? parsed.title : '', 120)
-  const task = sanitizeScreenProse(typeof parsed.task === 'string' ? parsed.task : '', 600)
-  const answerEn = sanitizeScreenProse(typeof parsed.answerEn === 'string' ? parsed.answerEn : '', 1200)
-  const answerRu = sanitizeScreenProse(typeof parsed.answerRu === 'string' ? parsed.answerRu : '', 1200)
-  const code = sanitizeScreenCode(typeof parsed.code === 'string' ? parsed.code : '')
   if (!title && !task && !answerEn && !answerRu && !code) {
     return empty
   }
@@ -437,6 +483,7 @@ async function chatOpenAiCompatible(
   models: string[],
   json = false,
   imageDataUrl?: string,
+  options?: { fast?: boolean; maxTokens?: number },
 ): Promise<string> {
   let lastError = 'Translation failed'
   const userContent = imageDataUrl
@@ -463,6 +510,11 @@ async function chatOpenAiCompatible(
             body.reasoning_effort = 'none'
             body.reasoning_format = 'hidden'
           }
+        } else if (options?.maxTokens) {
+          body.max_tokens = options.maxTokens
+          if (options.fast && base.includes('api.groq.com')) {
+            body.reasoning_effort = 'low'
+          }
         }
         if (asJson) {
           body.response_format = { type: 'json_object' }
@@ -474,10 +526,12 @@ async function chatOpenAiCompatible(
             delete body.reasoning_effort
             delete body.reasoning_format
             response = await postChatCompletion(base, apiKey, body)
+            if (!response.ok) {
+              lastError = await readError(response)
+            }
           }
         }
         if (!response.ok) {
-          lastError = await readError(response)
           if (asJson) {
             continue
           }
@@ -512,15 +566,17 @@ async function geminiGenerate(
   apiKey: string,
   blob: Blob | undefined,
   prompt: string,
-  options?: { imageDataUrl?: string; json?: boolean },
+  options?: { imageDataUrl?: string; json?: boolean; fast?: boolean; maxTokens?: number },
 ): Promise<string> {
-  const models = [
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
-    'gemini-3.1-flash-lite',
-    'gemini-2.5-flash',
-    'gemini-flash-latest',
-  ]
+  const models = options?.fast
+    ? ['gemini-2.5-flash', 'gemini-flash-latest']
+    : [
+        'gemini-3.6-flash',
+        'gemini-3.5-flash',
+        'gemini-3.1-flash-lite',
+        'gemini-2.5-flash',
+        'gemini-flash-latest',
+      ]
   const parts: Array<Record<string, unknown>> = [{ text: prompt }]
   if (blob) {
     parts.push({
@@ -547,6 +603,9 @@ async function geminiGenerate(
       const generationConfig: Record<string, unknown> = { temperature: image ? 0.1 : 0.2 }
       if (options?.json) {
         generationConfig.responseMimeType = 'application/json'
+      }
+      if (options?.maxTokens && !image) {
+        generationConfig.maxOutputTokens = options.maxTokens
       }
       if (image) {
         generationConfig.maxOutputTokens = 1600
@@ -675,11 +734,23 @@ async function readError(response: Response): Promise<string> {
 
 function isRetryableModelError(message: string): boolean {
   const lower = message.toLowerCase()
+  if (
+    lower.includes('quota') ||
+    lower.includes('resource_exhausted') ||
+    lower.includes('resource exhausted') ||
+    lower.includes('rate limit') ||
+    lower.includes('too many') ||
+    lower.includes('insufficient') ||
+    /\b429\b/.test(lower)
+  ) {
+    return false
+  }
   return (
-    lower.includes('model') ||
     lower.includes('does not exist') ||
     lower.includes('not found') ||
-    lower.includes('not supported')
+    lower.includes('not supported') ||
+    lower.includes('model_not_found') ||
+    /\b404\b/.test(lower)
   )
 }
 

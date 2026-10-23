@@ -143,7 +143,7 @@ chrome.runtime.onMessage.addListener(
       if (sidePanelVisible) {
         sidePanelPorts = Math.max(sidePanelPorts, 1)
         void chrome.storage.local.set({ sidePanelOpen: true })
-      } else {
+      } else if (sidePanelPorts === 0) {
         void hideOverlaysIfSidePanelClosed()
       }
       sendResponse({ ok: true })
@@ -152,16 +152,16 @@ chrome.runtime.onMessage.addListener(
 
     if (message.type === MessageType.EnableOverlay) {
       void overlayBoot.then(async () => {
-        if (!(await sidePanelIsOpen())) {
+        if (!(await sidePanelIsOpen()) && sidePanelPorts === 0) {
           return
         }
         if (isTranslateDirection(message.direction)) {
           translateDirection = message.direction
         }
         if (overlayEnabled) {
-          await pingOverlay()
+          await pingOverlay(message.reopen === true)
         } else {
-          await enableOverlay()
+          await enableOverlay(message.reopen === true)
         }
       })
       sendResponse({ ok: true })
@@ -291,7 +291,8 @@ chrome.runtime.onMessage.addListener(
       message.type === MessageType.ShowScanRegion ||
       message.type === MessageType.HideScanRegion ||
       message.type === MessageType.ShowScanSpinner ||
-      message.type === MessageType.RequestScanCapture
+      message.type === MessageType.RequestScanCapture ||
+      message.type === MessageType.SetOverlayStealth
     ) {
       overlayBoot
         .then(() => broadcastScan(message))
@@ -451,18 +452,18 @@ function persistOverlaySession(): void {
     .catch(() => undefined)
 }
 
-async function enableOverlay(): Promise<void> {
+async function enableOverlay(reopen = false): Promise<void> {
   overlayEnabled = true
   overlayTabIds = new Set(await overlayTargets())
   persistOverlaySession()
   await Promise.all([...overlayTabIds].map((tabId) => injectOverlay(tabId).catch(() => undefined)))
-  await enqueueOverlay(enableOverlayMessage())
+  await enqueueOverlay(enableOverlayMessage(reopen))
 }
 
-async function pingOverlay(): Promise<void> {
+async function pingOverlay(reopen = false): Promise<void> {
   overlayEnabled = true
   persistOverlaySession()
-  await enqueueOverlay(enableOverlayMessage())
+  await enqueueOverlay(enableOverlayMessage(reopen))
 }
 
 async function disableOverlay(): Promise<void> {
@@ -590,7 +591,7 @@ async function broadcastOverlay(message: ExtensionMessage): Promise<void> {
       message.type === MessageType.ShowOverlayQuestion ||
       message.type === MessageType.ShowOverlayAnswer)
   ) {
-    if (!sidePanelVisible) {
+    if (!sidePanelVisible && sidePanelPorts === 0) {
       return
     }
     overlayEnabled = true
@@ -694,12 +695,21 @@ async function resolveScreenshotTab(): Promise<chrome.tabs.Tab | undefined> {
 
 async function overlayTargets(): Promise<number[]> {
   const tabs = await chrome.tabs.query({})
+  const focused = await chrome.windows.getLastFocused().catch(() => undefined)
   const ids = new Set<number>()
   for (const tab of tabs) {
     if (!tab.id || !isHttpTab(tab)) {
       continue
     }
-    if (overlayTabIds.has(tab.id) || tab.audible || tab.active || overlayScore(tab) >= 8) {
+    const sameWindow = focused?.id !== undefined && tab.windowId === focused.id
+    if (
+      overlayTabIds.has(tab.id) ||
+      tab.audible ||
+      tab.active ||
+      sameWindow ||
+      overlayScore(tab) >= 8 ||
+      TASK_TAB_RE.test(tab.url ?? '')
+    ) {
       ids.add(tab.id)
     }
   }
@@ -727,8 +737,8 @@ function overlayScore(tab: chrome.tabs.Tab): number {
   return score
 }
 
-function enableOverlayMessage(): ExtensionMessage {
-  return { type: MessageType.EnableOverlay, direction: translateDirection }
+function enableOverlayMessage(reopen = false): ExtensionMessage {
+  return { type: MessageType.EnableOverlay, direction: translateDirection, reopen }
 }
 
 async function publishPlaqueCount(): Promise<void> {
@@ -766,7 +776,7 @@ async function openCaptionWindow(): Promise<void> {
     overlayTabIds.add(tabId)
     try {
       await injectOverlay(tabId)
-      await sendToFrame(tabId, enableOverlayMessage()).catch(() => undefined)
+      await sendToFrame(tabId, enableOverlayMessage(true)).catch(() => undefined)
       injected += 1
       if (overlayScore(tab) >= 8) {
         injectedCall += 1

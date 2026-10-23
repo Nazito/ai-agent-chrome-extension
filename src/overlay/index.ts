@@ -1,4 +1,10 @@
-type HudHandle = { teardown: () => void; enable: () => void; hide: () => void }
+type HudHandle = {
+  teardown: () => void
+  enable: () => void
+  hide: () => void
+  setStealth: (value: boolean) => void
+  refresh: () => void
+}
 type PlaqueKind = 'original' | 'translation'
 
 void (function bootJarvisOverlay(): void {
@@ -9,7 +15,7 @@ if (!chrome?.i18n || typeof chrome.i18n.getMessage !== 'function') {
   return
 }
 const overlayWindow = window as Window & { __jarvisHud?: HudHandle; __jarvisHudRev?: number }
-const HUD_REV = 30
+const HUD_REV = 34
 const STYLE_ID = 'jarvis-hud-style'
 const HOST_IDS = {
   original: 'jarvis-plaque-original',
@@ -23,15 +29,37 @@ const SCAN_MIN_W = 160
 const SCAN_MIN_H = 120
 let sidePanelOpen = false
 let sidePanelWidth = 360
+let overlayStealth = false
+let userClosedOriginal = false
+let userClosedTranslation = false
 const plaqueSizes: Record<string, { w: number; h: number; x?: number; y?: number }> = {}
 let plaqueSaveTimer = 0
 
-void chrome.storage.local.get({ sidePanelOpen: false, sidePanelWidth: 360, plaqueSizes: {} }).then((stored) => {
+void chrome.storage.local.get({
+  sidePanelOpen: false,
+  sidePanelWidth: 360,
+  plaqueSizes: {},
+  overlayStealth: false,
+  overlayClosedOriginal: false,
+  overlayClosedTranslation: false,
+}).then((stored) => {
   sidePanelOpen = stored.sidePanelOpen === true
   sidePanelWidth = Number(stored.sidePanelWidth) || 360
+  overlayStealth = stored.overlayStealth === true
+  userClosedOriginal = stored.overlayClosedOriginal === true
+  userClosedTranslation = stored.overlayClosedTranslation === true
   Object.assign(plaqueSizes, stored.plaqueSizes ?? {})
+  overlayWindow.__jarvisHud?.setStealth(overlayStealth)
+  overlayWindow.__jarvisHud?.refresh()
   clampMountedPlaques()
 })
+
+function persistUserClosed(): void {
+  void chrome.storage.local.set({
+    overlayClosedOriginal: userClosedOriginal,
+    overlayClosedTranslation: userClosedTranslation,
+  })
+}
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') {
     return
@@ -44,6 +72,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
   if (changes.sidePanelWidth) {
     sidePanelWidth = Number(changes.sidePanelWidth.newValue) || 360
+  }
+  if (changes.overlayStealth) {
+    overlayStealth = changes.overlayStealth.newValue === true
+    overlayWindow.__jarvisHud?.setStealth(overlayStealth)
   }
   clampMountedPlaques()
 })
@@ -60,8 +92,6 @@ function startOverlay(): HudHandle {
   let lastOriginal = ''
   let visible = false
   let direction: 'en-ru' | 'ru-en' = 'en-ru'
-  let closedOriginal = false
-  let closedTranslation = false
   let closedQuestions = false
   let meter = 0
   let lastStatus = ''
@@ -179,7 +209,8 @@ function startOverlay(): HudHandle {
     kind: 'original',
     title: chrome.i18n.getMessage('originalLabel') || 'English',
     onClose() {
-      closedOriginal = true
+      userClosedOriginal = true
+      persistUserClosed()
       render()
       reportStatus()
       void chrome.runtime
@@ -197,7 +228,8 @@ function startOverlay(): HudHandle {
     kind: 'translation',
     title: chrome.i18n.getMessage('translationLabel') || 'Русский',
     onClose() {
-      closedTranslation = true
+      userClosedTranslation = true
+      persistUserClosed()
       render()
       reportStatus()
       void chrome.runtime
@@ -304,8 +336,6 @@ function startOverlay(): HudHandle {
     originals.length = 0
     translations.length = 0
     lastOriginal = ''
-    closedOriginal = true
-    closedTranslation = true
     closedQuestions = true
     originalPlaque.clear()
     translationPlaque.clear()
@@ -333,10 +363,21 @@ function startOverlay(): HudHandle {
     answerRu?: string
     code?: string
     error?: string
+    stealth?: boolean
+    reopen?: boolean
   }): void {
+    if (message.type === 'SET_OVERLAY_STEALTH') {
+      overlayStealth = message.stealth === true
+      applyStealth()
+      return
+    }
     if (message.type === 'ENABLE_OVERLAY') {
-      closedOriginal = false
-      closedTranslation = false
+      if (message.reopen) {
+        userClosedOriginal = false
+        userClosedTranslation = false
+        closedQuestions = false
+        persistUserClosed()
+      }
       visible = true
       applyDirection(message.direction)
       render()
@@ -348,10 +389,7 @@ function startOverlay(): HudHandle {
       return
     }
     if (message.type === 'SHOW_OVERLAY_CAPTION') {
-      if (!sidePanelOpen && !visible) {
-        return
-      }
-      if (closedOriginal && closedTranslation) {
+      if (userClosedOriginal && userClosedTranslation) {
         return
       }
       visible = true
@@ -373,20 +411,19 @@ function startOverlay(): HudHandle {
     }
     if (message.type === 'CLOSE_OVERLAY_PLAQUE') {
       if (message.target === 'original') {
-        closedOriginal = true
+        userClosedOriginal = true
       }
       if (message.target === 'translation') {
-        closedTranslation = true
+        userClosedTranslation = true
       }
+      persistUserClosed()
       render()
       reportStatus()
       return
     }
     if (message.type === 'SHOW_OVERLAY_QUESTION' && message.id && message.question) {
-      if (!sidePanelOpen && !visible) {
-        return
-      }
       closedQuestions = false
+      visible = true
       questionsPlaque.upsert(message.id, {
         question: message.question,
         questionEn: message.questionEn,
@@ -410,9 +447,8 @@ function startOverlay(): HudHandle {
       return
     }
     if (message.type === 'SHOW_OVERLAY_ANSWER' && message.id) {
-      if (!sidePanelOpen && !visible) {
-        return
-      }
+      closedQuestions = false
+      visible = true
       questionsPlaque.setAnswer(message.id, {
         answer: message.answer,
         answerEn: message.answerEn,
@@ -441,6 +477,10 @@ function startOverlay(): HudHandle {
       return
     }
     if (message.type === 'SHOW_SCAN_SPINNER') {
+      if (overlayStealth) {
+        scanPlaque.setBusy(false)
+        return
+      }
       mount()
       scanPlaque.setBusy(true)
       return
@@ -484,11 +524,20 @@ function startOverlay(): HudHandle {
     render()
   }
 
+  function applyStealth(): void {
+    if (overlayStealth) {
+      scanPlaque.setBusy(false)
+    }
+    render()
+  }
+
   function render(): void {
     mount()
-    originalPlaque.setOpen(visible && !closedOriginal)
-    translationPlaque.setOpen(visible && !closedTranslation)
-    questionsPlaque.setOpen(visible && !closedQuestions && questionsPlaque.ids().length > 0)
+    originalPlaque.setOpen(visible && !userClosedOriginal && !overlayStealth)
+    translationPlaque.setOpen(visible && !userClosedTranslation && !overlayStealth)
+    questionsPlaque.setOpen(
+      visible && !closedQuestions && !overlayStealth && questionsPlaque.ids().length > 0,
+    )
     if (originals.length === 0) {
       originalPlaque.showHint(sourceHint())
     }
@@ -499,8 +548,8 @@ function startOverlay(): HudHandle {
   }
 
   function reportStatus(): void {
-    const original = visible && !closedOriginal
-    const translation = visible && !closedTranslation
+    const original = visible && !userClosedOriginal
+    const translation = visible && !userClosedTranslation
     const key = `${original}:${translation}`
     if (key === lastStatus) {
       return
@@ -520,13 +569,18 @@ function startOverlay(): HudHandle {
 
   return {
     enable() {
-      closedOriginal = false
-      closedTranslation = false
       visible = true
       render()
     },
+    setStealth(value: boolean) {
+      overlayStealth = value
+      applyStealth()
+    },
     hide() {
       hideHud()
+    },
+    refresh() {
+      render()
     },
     teardown() {
       chrome.runtime.onMessage.removeListener(onRuntimeMessage)
@@ -1617,9 +1671,22 @@ function createQuestionsPlaque(options: {
       paint()
     },
     setAnswer(id, payload) {
-      const item = items.find((entry) => entry.id === id)
+      let item = items.find((entry) => entry.id === id)
       if (!item) {
-        return
+        item = {
+          id,
+          question: payload.answer || payload.answerEn || payload.answerRu || '',
+          questionEn: payload.answerEn ?? '',
+          questionRu: payload.answerRu ?? '',
+          answer: '',
+          answerEn: '',
+          answerRu: '',
+          code: '',
+          error: '',
+          loading: false,
+          open: true,
+        }
+        items.push(item)
       }
       item.loading = false
       item.open = true

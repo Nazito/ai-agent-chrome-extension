@@ -224,6 +224,36 @@
   "captionsOpened": {
     "message": "Two cards on the meeting tab: source language on the left, translation on the right. Drag them if needed."
   },
+  "stealthHide": {
+    "message": "Hide cards from screen share"
+  },
+  "stealthShow": {
+    "message": "Show cards on the shared tab"
+  },
+  "stealthOnHint": {
+    "message": "Cards are hidden on the shared tab. Share a Chrome tab, not the whole screen. A floating window stays on your display; the scan frame is still visible if you open it."
+  },
+  "stealthOffHint": {
+    "message": "Cards are on the page again — screen share will show them."
+  },
+  "stealthPipKicker": {
+    "message": "Only you"
+  },
+  "wordLookupLabel": {
+    "message": "Word"
+  },
+  "wordLookupPlaceholder": {
+    "message": "English or Russian"
+  },
+  "wordLookupEnRu": {
+    "message": "EN → RU"
+  },
+  "wordLookupRuEn": {
+    "message": "RU → EN"
+  },
+  "googleTranslateName": {
+    "message": "Google Translate"
+  },
   "screenScan": {
     "message": "Scan the tab for a task"
   },
@@ -385,6 +415,27 @@
   },
   "issueTranslateUnknown": {
     "message": "English is ready, but there is no Russian: {provider} failed to translate. {detail}"
+  },
+  "issueLookupBadKey": {
+    "message": "{provider} rejected the key. Check it below."
+  },
+  "issueLookupQuota": {
+    "message": "{provider} is out of quota. Switch provider below."
+  },
+  "issueLookupRateLimit": {
+    "message": "{provider} is rate-limiting. Wait a few seconds."
+  },
+  "issueLookupModelGone": {
+    "message": "{provider} has no working translation model."
+  },
+  "issueLookupNetwork": {
+    "message": "No connection to {provider}."
+  },
+  "issueLookupEmpty": {
+    "message": "{provider} returned an empty translation."
+  },
+  "issueLookupUnknown": {
+    "message": "{provider} could not translate. {detail}"
   },
   "issueOverlayHost": {
     "message": "The caption card is not on the meeting tab: Chrome blocked page access. chrome://extensions → Jarvis → Details → Site access → On all sites, then refresh the meeting tab."
