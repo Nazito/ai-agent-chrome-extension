@@ -148,8 +148,9 @@
           </select>
         </label>
         <label class="key">
-          <span class="api-key-head">
-            <span id="api-key-label"></span>
+          <span id="api-key-label"></span>
+          <span class="api-key-field">
+            <input id="api-key" type="password" autocomplete="off" />
             <button id="copy-api-key" class="text-clear" type="button" disabled>
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <rect x="8.2" y="8.2" width="11.2" height="11.2" rx="1.4" />
@@ -157,7 +158,6 @@
               </svg>
             </button>
           </span>
-          <input id="api-key" type="password" autocomplete="off" />
         </label>
       </div>
       <p class="key-hint" id="api-key-hint"></p>

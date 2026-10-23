@@ -980,11 +980,22 @@ button.listening:hover:not(:disabled) {
   text-transform: uppercase;
 }
 
-.api-key-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+.api-key-field {
+  position: relative;
+}
+
+.api-key-field #api-key {
+  width: 100%;
+  padding-right: 30px;
+}
+
+#copy-api-key {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  z-index: 1;
+  transform: translateY(-50%);
+  background: rgba(255, 255, 255, 0.86);
 }
 
 #copy-api-key.copied {
