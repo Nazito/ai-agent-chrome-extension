@@ -1,0 +1,16 @@
+---
+description: Jarvis constitution — always follow before editing
+alwaysApply: true
+---
+
+# Constitution
+
+Read and obey `CONSTITUTION.md` and `AGENTS.md` at the repo root.
+
+- Edit `src/`, ship `dist/` (`npm run build`). Load unpacked **dist**, never src.
+- User-visible copy: `chrome.i18n`, both `src/_locales/en` and `ru` in the same change.
+- Side panel `index.ts`: every `let`/`const` at the top. No load-time calls that touch later consts (TDZ).
+- Overlay JS/CSS: bump `HUD_REV` in `src/overlay/index.ts`.
+- Word lookup uses Google Translate, not the LLM. Screen scan uses a vision model, not gpt-oss text.
+- Closed translation plaques stay closed until captions-on-screen (`reopen: true`).
+- Commit/push only when the user asks. Commit style `JHE-000N: short lowercase description`. Never force-push `main`.

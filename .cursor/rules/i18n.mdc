@@ -1,0 +1,11 @@
+---
+description: chrome.i18n strings must exist in en and ru
+globs: src/_locales/**/*.json
+alwaysApply: false
+---
+
+# i18n
+
+- Add or change keys in **both** `src/_locales/en/messages.json` and `src/_locales/ru/messages.json`.
+- Chrome i18n format: `{ "key": { "message": "..." } }`. Placeholders like `{provider}` stay identical in both files.
+- Do not hardcode UI copy in TS/HTML except overlay fallbacks after `chrome.i18n.getMessage(...)`.

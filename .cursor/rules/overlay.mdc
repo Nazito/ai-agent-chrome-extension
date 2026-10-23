@@ -1,0 +1,14 @@
+---
+description: Overlay HUD plaques — remount and close semantics
+globs: src/overlay/**
+alwaysApply: false
+---
+
+# Overlay
+
+- The HUD is an IIFE in `src/overlay/index.ts`. Re-injecting the same `HUD_REV` keeps the live instance.
+- Any overlay JS or CSS change: increment `HUD_REV` so existing tabs teardown and remount.
+- `ENABLE_OVERLAY` without `reopen` must not clear `userClosedOriginal` / `userClosedTranslation`.
+- `SHOW_OVERLAY_CAPTION` is a no-op if both plaques were closed by the user.
+- `openCaptionWindow` / captions button send `reopen: true`.
+- Stealth (`overlayStealth`) hides plaques from **tab** share only, not full-screen capture.
