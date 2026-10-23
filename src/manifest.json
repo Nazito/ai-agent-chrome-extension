@@ -25,7 +25,7 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["sidePanel", "tabCapture", "desktopCapture", "offscreen", "storage", "tabs", "windows", "activeTab", "scripting"],
+  "permissions": ["sidePanel", "tabCapture", "desktopCapture", "offscreen", "storage", "tabs", "windows", "activeTab", "scripting", "clipboardWrite"],
   "host_permissions": ["<all_urls>"],
   "content_scripts": [
     {

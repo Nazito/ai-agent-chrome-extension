@@ -980,6 +980,22 @@ button.listening:hover:not(:disabled) {
   text-transform: uppercase;
 }
 
+.api-key-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#copy-api-key.copied {
+  color: var(--cyan);
+  border-color: var(--cyan);
+}
+
+#copy-api-key:disabled {
+  opacity: 0.4;
+}
+
 .key input,
 .key select,
 .key textarea {

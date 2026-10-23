@@ -55,6 +55,7 @@ const translationEl = document.getElementById('tab-translation')!
 const clearOriginal = document.getElementById('clear-original') as HTMLButtonElement
 const clearTranslation = document.getElementById('clear-translation') as HTMLButtonElement
 const apiKeyInput = document.getElementById('api-key') as HTMLInputElement
+const copyKeyBtn = document.getElementById('copy-api-key') as HTMLButtonElement
 const providerSelect = document.getElementById('provider') as HTMLSelectElement
 const apiKeyLabel = document.getElementById('api-key-label')!
 const apiKeyHint = document.getElementById('api-key-hint')!
@@ -142,6 +143,7 @@ let stealthHud: Window | null = null
 let stealthBusy = false
 let wordLookupTimer = 0
 let wordLookupToken = 0
+let copyKeyTimer = 0
 let hintLockUntil = 0
 let silentSince = 0
 let sidePanelClosing = false
@@ -225,6 +227,7 @@ labelButton(stealthToggle, 'stealthHide')
 paintStealthButton()
 labelButton(clearOriginal, 'clearOriginal')
 labelButton(clearTranslation, 'clearTranslation')
+labelButton(copyKeyBtn, 'apiKeyCopy')
 setSourceState(micToggle, false)
 setSourceState(tabToggle, false)
 
@@ -364,6 +367,9 @@ wordLookupInput.addEventListener('keydown', (event) => {
 
 apiKeyInput.addEventListener('change', persistApiKey)
 apiKeyInput.addEventListener('input', persistApiKey)
+copyKeyBtn.addEventListener('click', () => {
+  void copyApiKey()
+})
 providerSelect.addEventListener('change', () => {
   const next = providerSelect.value as ProviderId
   const previous = settings.provider
@@ -1801,10 +1807,44 @@ function syncDirectionUi(): void {
 function persistApiKey(): void {
   settings.keys[settings.provider] = apiKeyInput.value.trim()
   void saveProviderKey(settings.provider, currentKey())
+  paintCopyKeyButton(false)
 }
 
 function currentKey(): string {
   return settings.keys[settings.provider]?.trim() ?? ''
+}
+
+async function copyApiKey(): Promise<void> {
+  persistApiKey()
+  const key = currentKey()
+  if (!key) {
+    setHint(chrome.i18n.getMessage('apiKeyCopyEmpty'), 4000)
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(key)
+  } catch {
+    const previousType = apiKeyInput.type
+    apiKeyInput.type = 'text'
+    apiKeyInput.focus()
+    apiKeyInput.select()
+    const copied = document.execCommand('copy')
+    apiKeyInput.type = previousType
+    apiKeyInput.blur()
+    if (!copied) {
+      setHint(chrome.i18n.getMessage('apiKeyCopyFailed'), 4000)
+      return
+    }
+  }
+  paintCopyKeyButton(true)
+  window.clearTimeout(copyKeyTimer)
+  copyKeyTimer = window.setTimeout(() => paintCopyKeyButton(false), 1600)
+}
+
+function paintCopyKeyButton(copied: boolean): void {
+  copyKeyBtn.disabled = !currentKey()
+  copyKeyBtn.classList.toggle('copied', copied)
+  labelButton(copyKeyBtn, copied ? 'apiKeyCopied' : 'apiKeyCopy')
 }
 
 function paintWordLookupDir(text: string): void {
@@ -1943,6 +1983,7 @@ function syncProviderUi(): void {
   apiKeyLabel.textContent = chrome.i18n.getMessage(`apiKeyLabel${suffix}`)
   apiKeyHint.textContent = chrome.i18n.getMessage(`apiKeyHint${suffix}`)
   apiKeyHint.title = apiKeyHint.textContent
+  paintCopyKeyButton(false)
 }
 
 function profileQuestionLabel(id: ProfileQuestionId): string {

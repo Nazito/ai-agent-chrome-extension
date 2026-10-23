@@ -191,6 +191,18 @@
   "apiKeyHintGemini": {
     "message": "aistudio.google.com/apikey — бесплатный тариф"
   },
+  "apiKeyCopy": {
+    "message": "Скопировать ключ"
+  },
+  "apiKeyCopied": {
+    "message": "Скопировано"
+  },
+  "apiKeyCopyEmpty": {
+    "message": "Нечего копировать."
+  },
+  "apiKeyCopyFailed": {
+    "message": "Не удалось скопировать ключ."
+  },
   "overlayWaiting": {
     "message": "Жду речь."
   },

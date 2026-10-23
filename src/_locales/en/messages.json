@@ -191,6 +191,18 @@
   "apiKeyHintGemini": {
     "message": "aistudio.google.com/apikey — free tier"
   },
+  "apiKeyCopy": {
+    "message": "Copy key"
+  },
+  "apiKeyCopied": {
+    "message": "Copied"
+  },
+  "apiKeyCopyEmpty": {
+    "message": "No key to copy."
+  },
+  "apiKeyCopyFailed": {
+    "message": "Could not copy the key."
+  },
   "overlayWaiting": {
     "message": "Waiting for speech."
   },
